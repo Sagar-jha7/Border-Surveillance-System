@@ -148,7 +148,9 @@
     }
 
     function switchToHttps() {
-      const httpsUrl = 'https://' + location.hostname + ':8443' + location.pathname;
+      const localDevPort = location.port === '3000' || location.port === '8000';
+      const host = localDevPort ? `${location.hostname}:8443` : location.host;
+      const httpsUrl = 'https://' + host + location.pathname;
       location.href = httpsUrl;
     }
 

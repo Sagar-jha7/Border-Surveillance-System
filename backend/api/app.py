@@ -18,7 +18,7 @@ from typing import Dict, List, Optional, Set, Tuple
 
 import cv2
 import numpy as np
-from fastapi import FastAPI, WebSocket, WebSocketDisconnect, HTTPException
+from fastapi import FastAPI, WebSocket, WebSocketDisconnect, HTTPException, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import HTMLResponse, FileResponse
 from fastapi.staticfiles import StaticFiles
@@ -154,12 +154,24 @@ def create_app() -> FastAPI:
         }
 
     @app.get("/mobile-stream-info")
-    async def mobile_stream_info():
-        host = get_lan_ip()
+    async def mobile_stream_info(request: Request):
+        request_host = request.headers.get("x-forwarded-host") or request.headers.get("host", "")
+        hostname = request_host.split(":")[0].lower()
+        local_hosts = {"", "localhost", "127.0.0.1", "0.0.0.0"}
+
+        if hostname in local_hosts:
+            host = get_lan_ip()
+            https_url = f"https://{host}:8443/phone_stream.html"
+            http_url = f"http://{host}:8000/phone_stream.html"
+        else:
+            host = request_host
+            https_url = f"https://{host}/phone_stream.html"
+            http_url = f"http://{host}/phone_stream.html"
+
         return {
             "host": host,
-            "https_url": f"https://{host}:8443/phone_stream.html",
-            "http_url": f"http://{host}:8000/phone_stream.html",
+            "https_url": https_url,
+            "http_url": http_url,
             "websocket_path": "/ws/phone/{client_id}",
         }
 
