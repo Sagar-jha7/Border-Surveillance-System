@@ -71,6 +71,10 @@ class VideoFileSource(BaseVideoSource):
             settings.pipeline.frame_width,
             settings.pipeline.frame_height,
         )
+        if not self.source_path.is_absolute() and not self.source_path.exists():
+            _proj_root = Path(__file__).resolve().parent.parent.parent
+            if (_proj_root / self.source_path).exists():
+                self.source_path = _proj_root / self.source_path
 
         if not self.source_path.exists():
             raise FileNotFoundError(
@@ -163,13 +167,68 @@ class WebcamSource(BaseVideoSource):
             logger.info("[%s] Webcam released", self.camera_id)
 
 
+class IPCCTVSource(BaseVideoSource):
+    """
+    Standard IP-based CCTV camera adapter supporting RTSP, HTTP, MJPEG streams.
+    """
+
+    def __init__(
+        self,
+        camera_id: str,
+        location: str,
+        stream_url: str,
+        target_fps: int | None = None,
+        resize_to: Optional[tuple[int, int]] = None,
+    ):
+        super().__init__(
+            camera_id=camera_id,
+            location=location,
+            target_fps=target_fps or settings.pipeline.target_fps,
+        )
+        self.stream_url = str(stream_url)
+        self.resize_to = resize_to or (
+            settings.pipeline.frame_width,
+            settings.pipeline.frame_height,
+        )
+
+    def frames(self) -> Iterator[Frame]:
+        while True:
+            cap = cv2.VideoCapture(self.stream_url)
+            if not cap.isOpened():
+                logger.error("[%s] Cannot open IP camera feed: %s. Retrying in 3s...", self.camera_id, self.stream_url)
+                time.sleep(3.0)
+                continue
+
+            logger.info("[%s] Connected to IP camera stream: %s", self.camera_id, self.stream_url)
+            try:
+                while True:
+                    ok, img = cap.read()
+                    if not ok or img is None:
+                        logger.warning("[%s] IP camera frame drop / reconnecting...", self.camera_id)
+                        break
+
+                    if img.shape[1] != self.resize_to[0] or img.shape[0] != self.resize_to[1]:
+                        img = cv2.resize(img, self.resize_to, interpolation=cv2.INTER_LINEAR)
+
+                    yield self._make_frame(img)
+            finally:
+                cap.release()
+            time.sleep(1.5)
+
+
 def source_from_config(camera_cfg: dict) -> BaseVideoSource:
     cid = camera_cfg["camera_id"]
     loc = camera_cfg.get("location", cid)
     src = camera_cfg["source"]
     kind = camera_cfg.get("type", "file")
 
-    if kind == "file":
+    if kind in ["ip_camera", "rtsp", "http", "stream"]:
+        return IPCCTVSource(
+            camera_id=cid,
+            location=loc,
+            stream_url=src,
+        )
+    elif kind == "file":
         return VideoFileSource(
             camera_id=cid,
             location=loc,

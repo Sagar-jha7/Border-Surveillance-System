@@ -1,139 +1,189 @@
 """
 backend/detection/visualizer.py
 --------------------------------
-Draw detection bounding boxes on a frame for preview windows and
-streaming to the dashboard.
+Visualizer for IBVAP (Intelligent Border Video Analytics Platform).
 
-Used by:
-  - Phase 1: OpenCV preview window in pipeline.py
-  - Phase 2+: Encode annotated frame as JPEG and push over WebSocket
-
-Color scheme (BGR):
-  Person       → green   (0, 255, 0)
-  Vehicle      → blue    (255, 100, 0)
-  Animal       → yellow  (0, 220, 220)
-  Drone        → red     (0, 0, 255)
-  Unidentified → white   (200, 200, 200)
-  Other        → magenta (255, 0, 255)
-  Crossing!    → bright orange  (0, 165, 255)  [Phase 3+]
+Annotates video streams with:
+  - High-precision entity bounding boxes and track IDs
+  - Explicit vehicle classification (Car, Truck, Bus, Motorcycle, Bicycle)
+  - Face Recognition System (FRS) face bounding boxes and identity tags
+  - Automatic Number Plate Recognition (ANPR) license plate tags
+  - Virtual Fence perimeter lines (armed / breach glow states)
+  - Suspicious activity indicators (loitering duration, incursion speed)
+  - C4ISR tactical HUD overlays
 """
 
 from __future__ import annotations
 
-from typing import List, Optional, Tuple
+import time
+from typing import List, Optional, Set, Tuple
 
 import cv2
 import numpy as np
 
 from backend.ingestion.frame_model import Detection, Frame
 
-# ---------------------------------------------------------------------------
-# Colour palette (BGR)
-# ---------------------------------------------------------------------------
+# BGR color scheme
+COLOR_PERSON = (0, 220, 0)         # Green
+COLOR_VEHICLE = (240, 120, 0)      # Deep Blue/Cyan
+COLOR_ANIMAL = (0, 215, 255)       # Yellow/Amber
+COLOR_DRONE = (0, 0, 255)          # Red
+COLOR_LUGGAGE = (180, 0, 220)      # Purple
+COLOR_UNIDENTIFIED = (180, 180, 180)# Gray
+COLOR_FACE = (255, 255, 0)         # Cyan
+COLOR_PLATE = (0, 230, 255)        # Bright Yellow
+COLOR_CROSSING = (0, 69, 255)      # Orange-Red
+COLOR_SAFE_FENCE = (0, 220, 100)   # Emerald Green
+COLOR_BREACH_FENCE = (0, 0, 255)   # Red
 
-CATEGORY_COLORS: dict[str, Tuple[int, int, int]] = {
-    "Person":        (0, 220, 0),
-    "Vehicle":       (230, 80, 0),
-    "Animal":        (0, 200, 200),
-    "Drone":         (0, 0, 255),
-    "Unidentified":  (180, 180, 180),
+CATEGORY_COLORS = {
+    "Person": COLOR_PERSON,
+    "Vehicle": COLOR_VEHICLE,
+    "Animal": COLOR_ANIMAL,
+    "Drone": COLOR_DRONE,
+    "Luggage": COLOR_LUGGAGE,
+    "Unidentified": COLOR_UNIDENTIFIED,
 }
-DEFAULT_COLOR: Tuple[int, int, int] = (255, 0, 255)   # magenta for unknown labels
-CROSSING_COLOR: Tuple[int, int, int] = (0, 165, 255)  # orange for boundary crossing
 
-# ---------------------------------------------------------------------------
-# Public API
-# ---------------------------------------------------------------------------
 
 def draw_detections(
     frame: Frame,
     detections: List[Detection],
     boundary_line: Optional[Tuple[Tuple[int, int], Tuple[int, int]]] = None,
-    crossing_ids: Optional[set] = None,
+    perimeter_polygon: Optional[List[Tuple[int, int]]] = None,
+    crossing_ids: Optional[Set[int]] = None,
     show_tier: bool = False,
+    is_night: bool = False,
 ) -> np.ndarray:
     """
-    Draw bounding boxes and labels onto a copy of frame.img.
-
-    Parameters
-    ----------
-    frame           : Source frame (not modified in place).
-    detections      : List of Detection objects to draw.
-    boundary_line   : Optional ((x1,y1),(x2,y2)) line drawn as a red line.
-    crossing_ids    : Set of track_ids currently crossing the line (drawn orange).
-    show_tier       : If True, append the source tier to the label.
-
-    Returns
-    -------
-    Annotated BGR numpy array (same shape as frame.img).
+    Annotates the video frame with tactical AI analytics overlays.
     """
     img = frame.img.copy()
     crossing_ids = crossing_ids or set()
+    h, w = img.shape[:2]
+    now = time.time()
 
+    # 1. Virtual Fence / Perimeter Overlay
+    has_breach = len(crossing_ids) > 0
+    fence_color = COLOR_BREACH_FENCE if has_breach else COLOR_SAFE_FENCE
+
+    # Draw polygonal perimeter if defined
+    if perimeter_polygon and len(perimeter_polygon) >= 3:
+        pts = np.array(perimeter_polygon, np.int32).reshape((-1, 1, 2))
+        cv2.polylines(img, [pts], isClosed=True, color=fence_color, thickness=2, lineType=cv2.LINE_AA)
+        status_txt = "VIRTUAL PERIMETER: BREACH DETECTED!" if has_breach else "VIRTUAL PERIMETER: ARMED"
+        cv2.putText(
+            img, status_txt,
+            (perimeter_polygon[0][0], max(20, perimeter_polygon[0][1] - 8)),
+            cv2.FONT_HERSHEY_SIMPLEX, 0.45, fence_color, 1, cv2.LINE_AA
+        )
+
+    # Draw virtual tripwire line
+    if boundary_line is not None:
+        pt1, pt2 = boundary_line
+        cv2.line(img, pt1, pt2, fence_color, 2, cv2.LINE_AA)
+        fence_label = "VIRTUAL FENCE: INTRUSION ACTIVE" if has_breach else "VIRTUAL FENCE: ARMED"
+        cv2.putText(
+            img, fence_label,
+            (pt1[0] + 10, max(25, pt1[1] - 8)),
+            cv2.FONT_HERSHEY_SIMPLEX, 0.45, fence_color, 1, cv2.LINE_AA
+        )
+
+    # 2. Render Detection Bounding Boxes & AI Badges
     for det in detections:
         if det.suppressed:
             continue
 
         x1, y1, x2, y2 = (int(v) for v in det.bbox)
+        is_breaching = det.track_id is not None and det.track_id in crossing_ids
 
-        is_crossing = det.track_id is not None and det.track_id in crossing_ids
-        color = CROSSING_COLOR if is_crossing else CATEGORY_COLORS.get(det.category, DEFAULT_COLOR)
+        # Main box color
+        base_color = COLOR_CROSSING if is_breaching else CATEGORY_COLORS.get(det.category, (200, 200, 200))
+        cv2.rectangle(img, (x1, y1), (x2, y2), base_color, 2)
 
-        # Bounding box
-        cv2.rectangle(img, (x1, y1), (x2, y2), color, 2)
+        # Primary label (includes Vehicle classification if available)
+        cat_label = det.category
+        if det.category == "Vehicle" and det.sub_category:
+            cat_label = f"Vehicle ({det.sub_category})"
+        elif det.sub_category and det.category in ["Animal", "Luggage"]:
+            cat_label = det.sub_category
 
-        # Label text
-        label_parts = [det.category]
+        label_parts = [cat_label]
         if det.track_id is not None:
             label_parts.append(f"#{det.track_id}")
         label_parts.append(f"{det.confidence:.2f}")
-        if show_tier:
-            label_parts.append(f"[{det.source_tier}]")
-        label = " ".join(label_parts)
+        main_label = " ".join(label_parts)
 
-        (tw, th), _ = cv2.getTextSize(label, cv2.FONT_HERSHEY_SIMPLEX, 0.55, 1)
-        # Background rect for legibility
-        cv2.rectangle(img, (x1, y1 - th - 6), (x1 + tw + 4, y1), color, -1)
+        # Label background pill
+        (tw, th), _ = cv2.getTextSize(main_label, cv2.FONT_HERSHEY_SIMPLEX, 0.45, 1)
+        cv2.rectangle(img, (x1, max(0, y1 - th - 6)), (x1 + tw + 6, y1), base_color, -1)
         cv2.putText(
-            img, label,
-            (x1 + 2, y1 - 4),
-            cv2.FONT_HERSHEY_SIMPLEX,
-            0.55,
-            (255, 255, 255),
-            1,
-            cv2.LINE_AA,
+            img, main_label,
+            (x1 + 3, max(th + 2, y1 - 4)),
+            cv2.FONT_HERSHEY_SIMPLEX, 0.45, (255, 255, 255), 1, cv2.LINE_AA
         )
 
-    # Boundary line overlay
-    if boundary_line is not None:
-        pt1, pt2 = boundary_line
-        cv2.line(img, pt1, pt2, (0, 0, 255), 2, cv2.LINE_AA)
-        cv2.putText(
-            img, "BOUNDARY",
-            (pt1[0], pt1[1] - 8),
-            cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 0, 255), 1, cv2.LINE_AA,
-        )
+        # 3. Face Detection & FRS Overlay
+        if det.face_detected and det.face_bbox:
+            fx1, fy1, fx2, fy2 = (int(v) for v in det.face_bbox)
+            is_suspect_match = det.face_name and "%" in det.face_name and "Unflagged" not in det.face_name
+            face_color = (0, 0, 255) if is_suspect_match else (255, 200, 0)
+            thickness = 2 if is_suspect_match else 1
+            cv2.rectangle(img, (fx1, fy1), (fx2, fy2), face_color, thickness, cv2.LINE_AA)
+            if det.face_name and "Unflagged" not in det.face_name:
+                face_tag = f"FRS MATCH: {det.face_name}"
+                (ftw, fth), _ = cv2.getTextSize(face_tag, cv2.FONT_HERSHEY_SIMPLEX, 0.40, 1)
+                banner_top = max(0, fy1 - fth - 6)
+                cv2.rectangle(img, (fx1, banner_top), (fx1 + ftw + 8, fy1), (0, 0, 180), -1)
+                cv2.rectangle(img, (fx1, banner_top), (fx1 + ftw + 8, fy1), (0, 0, 255), 1)
+                cv2.putText(
+                    img, face_tag,
+                    (fx1 + 4, fy1 - 4),
+                    cv2.FONT_HERSHEY_SIMPLEX, 0.40, (255, 255, 255), 1, cv2.LINE_AA
+                )
 
-    # HUD: camera ID + location top-right
-    hud_text = f"{frame.camera_id} | {frame.location}"
-    cv2.putText(
-        img, hud_text,
-        (8, 22),
-        cv2.FONT_HERSHEY_SIMPLEX, 0.55, (255, 255, 255), 1, cv2.LINE_AA,
-    )
+        # 4. ANPR License Plate Badge Overlay
+        if det.plate_number:
+            plate_tag = f"ANPR: {det.plate_number}"
+            (ptw, pth), _ = cv2.getTextSize(plate_tag, cv2.FONT_HERSHEY_SIMPLEX, 0.45, 1)
+            # Render plate banner at bottom of vehicle bbox
+            banner_y = min(h - 5, y2 + pth + 4)
+            cv2.rectangle(img, (x1, y2 - 2), (x1 + ptw + 8, banner_y), (0, 0, 0), -1)
+            cv2.rectangle(img, (x1, y2 - 2), (x1 + ptw + 8, banner_y), COLOR_PLATE, 1)
+            cv2.putText(
+                img, plate_tag,
+                (x1 + 4, banner_y - 3),
+                cv2.FONT_HERSHEY_SIMPLEX, 0.42, COLOR_PLATE, 1, cv2.LINE_AA
+            )
 
-    # Detection count bottom-left
-    count_text = f"Detections: {sum(1 for d in detections if not d.suppressed)}"
-    cv2.putText(
-        img, count_text,
-        (8, img.shape[0] - 10),
-        cv2.FONT_HERSHEY_SIMPLEX, 0.5, (200, 200, 200), 1, cv2.LINE_AA,
-    )
+        # 5. Suspicious Loitering Badge
+        if det.is_loitering:
+            loiter_text = f"LOITERING {int(det.loitering_seconds)}s"
+            (ltw, lth), _ = cv2.getTextSize(loiter_text, cv2.FONT_HERSHEY_SIMPLEX, 0.40, 1)
+            cv2.rectangle(img, (x2 - ltw - 6, y1), (x2, y1 + lth + 6), (0, 0, 200), -1)
+            cv2.putText(
+                img, loiter_text,
+                (x2 - ltw - 3, y1 + lth + 3),
+                cv2.FONT_HERSHEY_SIMPLEX, 0.40, (255, 255, 255), 1, cv2.LINE_AA
+            )
+
+    # 6. IBVAP Tactical Header HUD
+    hud_bg_w = min(w, 420)
+    cv2.rectangle(img, (0, 0), (hud_bg_w, 28), (15, 23, 42), -1)
+    cv2.line(img, (0, 28), (hud_bg_w, 28), (51, 65, 85), 1)
+
+    hud_title = f"IBVAP | {frame.camera_id} | {frame.location}"
+    cv2.putText(img, hud_title, (8, 19), cv2.FONT_HERSHEY_SIMPLEX, 0.48, (241, 245, 249), 1, cv2.LINE_AA)
+
+    # Mode Indicator badge (Right side)
+    mode_str = "NIGHT-VISION (CLAHE)" if is_night else "DAYLIGHT RGB"
+    mode_color = (0, 255, 255) if is_night else (100, 255, 100)
+    cv2.putText(img, mode_str, (w - 170, 19), cv2.FONT_HERSHEY_SIMPLEX, 0.42, mode_color, 1, cv2.LINE_AA)
 
     return img
 
 
-def encode_jpeg(img: np.ndarray, quality: int = 75) -> bytes:
+def encode_jpeg(img: np.ndarray, quality: int = 70) -> bytes:
     """Encode a BGR numpy array as JPEG bytes for WebSocket streaming."""
     ok, buf = cv2.imencode(".jpg", img, [cv2.IMWRITE_JPEG_QUALITY, quality])
     if not ok:

@@ -3,11 +3,12 @@ import { useState, useEffect, useRef, useCallback } from 'react';
 /**
  * Custom hook to handle real-time communications with the Border Surveillance backend.
  */
-export function useSystemWebSocket() {
+export function useSystemWebSocket({ onNewAlert } = {}) {
   const [connected, setConnected] = useState(false);
   const [cameraList, setCameraList] = useState([]);
   const [cameraFrames, setCameraFrames] = useState({});
   const [alerts, setAlerts] = useState([]);
+  const [systemRunning, setSystemRunning] = useState(true);
   const [status, setStatus] = useState({
     total_cameras: 0,
     cameras_online: 0,
@@ -16,6 +17,9 @@ export function useSystemWebSocket() {
     last_update: new Date().toISOString(),
     zone_name: 'Border Sector North (Alpha-7)',
   });
+  // Keep a stable ref so closures inside WS handlers always call the latest callback
+  const onNewAlertRef = useRef(onNewAlert);
+  useEffect(() => { onNewAlertRef.current = onNewAlert; }, [onNewAlert]);
 
   const alertWsRef = useRef(null);
   const frameWsRefs = useRef({});
@@ -79,6 +83,10 @@ export function useSystemWebSocket() {
               active_alerts: prev.active_alerts + 1,
               last_update: new Date().toISOString(),
             }));
+            // Fire beep callback for non-system alerts
+            if (payload.priority && payload.category !== 'System') {
+              onNewAlertRef.current && onNewAlertRef.current(payload);
+            }
           } else if (msg.type === 'status' && msg.payload) {
             setStatus((prev) => ({ ...prev, ...msg.payload }));
           }
@@ -162,8 +170,11 @@ export function useSystemWebSocket() {
     connected,
     status,
     alerts,
+    setAlerts,
     cameraFrames,
     cameraList,
     refreshCameras,
+    systemRunning,
+    setSystemRunning,
   };
 }

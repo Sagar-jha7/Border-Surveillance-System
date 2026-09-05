@@ -58,6 +58,10 @@ COCO_TO_CATEGORY: dict[str, str] = {
     "bear": "Animal",
     "zebra": "Animal",
     "giraffe": "Animal",
+    # Luggage / Unattended Objects (Suspicious Activity)
+    "backpack": "Luggage",
+    "handbag": "Luggage",
+    "suitcase": "Luggage",
 }
 
 # ---------------------------------------------------------------------------
@@ -151,12 +155,14 @@ class Tier1Detector:
                     self._class_names, dict
                 ) else self._class_names[cls_idx]
                 category = COCO_TO_CATEGORY.get(cls_name, cls_name.capitalize())
+                sub_category = cls_name.capitalize() if category in ["Vehicle", "Luggage", "Animal"] else None
                 conf = float(box.conf.item())
                 x1, y1, x2, y2 = box.xyxy[0].tolist()
 
                 detections.append(
                     Detection(
                         category=category,
+                        sub_category=sub_category,
                         confidence=conf,
                         bbox=(x1, y1, x2, y2),
                         source_tier=SOURCE_TIER1,

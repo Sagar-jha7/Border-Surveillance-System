@@ -22,15 +22,20 @@ class AlertPriority(str, Enum):
 
 
 class AlertCategory(str, Enum):
-    PERSON       = "Person"
-    VEHICLE      = "Vehicle"
-    ANIMAL       = "Animal"
-    DRONE        = "Drone"
-    GROUP        = "Group"
-    REID_MATCH   = "ReID-Match"
-    MULTI_SECTOR = "Multi-Sector"
-    UNIDENTIFIED = "Unidentified"
-    SYSTEM       = "System"
+    PERSON              = "Person"
+    VEHICLE             = "Vehicle"
+    ANIMAL              = "Animal"
+    DRONE               = "Drone"
+    GROUP               = "Group"
+    REID_MATCH          = "ReID-Match"
+    MULTI_SECTOR        = "Multi-Sector"
+    UNIDENTIFIED        = "Unidentified"
+    VIRTUAL_FENCE       = "Virtual Fence"
+    FACE_RECOGNITION    = "Face Recognition"
+    ANPR_PLATE          = "ANPR Plate"
+    SUSPICIOUS_ACTIVITY = "Suspicious Activity"
+    NIGHT_MOVEMENT      = "Night Movement"
+    SYSTEM              = "System"
 
 
 class SectionType(int, Enum):
@@ -78,6 +83,9 @@ class Alert(BaseModel):
     similarity_score: Optional[float] = None
     unidentified_confidence: Optional[float] = None
     incursion_points_count: Optional[int] = None
+    plate_number: Optional[str] = None
+    face_name: Optional[str] = None
+    snapshot_b64: Optional[str] = None
     metadata: Dict[str, Any] = Field(default_factory=dict)
 
 

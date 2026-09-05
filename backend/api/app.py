@@ -1,7 +1,8 @@
 """
 backend/api/app.py
 --------------------
-FastAPI application — REST endpoints + WebSocket streaming + 6-Section Intelligence Coordinator.
+FastAPI application for IBVAP (Intelligent Border Video Analytics Platform).
+REST endpoints + WebSocket frame/alert streaming + Dynamic Camera Management + Persistent Event Store.
 """
 
 from __future__ import annotations
@@ -15,12 +16,13 @@ from contextlib import asynccontextmanager
 from datetime import datetime
 from pathlib import Path
 from typing import Dict, List, Optional, Set, Tuple
+from uuid import uuid4
 
 import cv2
 import numpy as np
-from fastapi import FastAPI, WebSocket, WebSocketDisconnect, HTTPException, Request
+from fastapi import FastAPI, WebSocket, WebSocketDisconnect, HTTPException, Request, Query
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import HTMLResponse, FileResponse
+from fastapi.responses import HTMLResponse, FileResponse, Response
 from fastapi.staticfiles import StaticFiles
 
 from backend.config.settings import settings
@@ -34,8 +36,10 @@ from backend.tracking.tracker import WithinCameraTracker
 from backend.alerts.section_coordinator import SectionCoordinator
 from backend.alerts.schema import Alert, AlertPriority, AlertCategory, SectionType
 from backend.detection.visualizer import draw_detections, encode_jpeg
+from backend.db.event_store import event_store
 
 logger = logging.getLogger(__name__)
+
 
 # ---------------------------------------------------------------------------
 # Connection manager
@@ -108,23 +112,23 @@ active_phone_cameras: Dict[str, dict] = {}
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     global engine
-    logger.info("Border Surveillance API starting up...")
+    logger.info("IBVAP Platform starting up...")
     engine = SurveillanceEngine(
         broadcast_frame_cb=manager.broadcast_frame,
         broadcast_alert_cb=manager.broadcast_alert,
     )
     await engine.start()
     yield
-    logger.info("Border Surveillance API shutting down...")
+    logger.info("IBVAP Platform shutting down...")
     if engine:
         await engine.stop()
 
 
 def create_app() -> FastAPI:
     app = FastAPI(
-        title="Border Surveillance System",
-        description="AI-based intelligent video analytics platform (SIH26187)",
-        version="0.3.0",
+        title="IBVAP — Intelligent Border Video Analytics Platform",
+        description="AI-based video analytics platform for border surveillance (SIH26187 / BSF / MHA)",
+        version="1.0.0",
         lifespan=lifespan,
     )
 
@@ -140,7 +144,7 @@ def create_app() -> FastAPI:
     phone_html_path = Path(__file__).parent.parent.parent / "frontend" / "public" / "phone_stream.html"
 
     # ------------------------------------------------------------------
-    # REST endpoints
+    # REST endpoints: Core & Health
     # ------------------------------------------------------------------
 
     @app.get("/health")
@@ -148,6 +152,7 @@ def create_app() -> FastAPI:
         total_cams = (len(engine.workers) if engine else 0) + len(active_phone_cameras)
         return {
             "status": "ok",
+            "platform": "IBVAP",
             "active_cameras": total_cams,
             "engine_running": engine is not None,
             "connected_phones": list(active_phone_cameras.keys()),
@@ -175,15 +180,23 @@ def create_app() -> FastAPI:
             "websocket_path": "/ws/phone/{client_id}",
         }
 
+    # ------------------------------------------------------------------
+    # REST endpoints: Camera Registry & Ingestion
+    # ------------------------------------------------------------------
+
     @app.get("/cameras")
     async def list_cameras():
         registry_path = Path(__file__).parent.parent / "config" / "camera_registry.json"
         cameras = []
         try:
-            with open(registry_path, "r") as f:
-                data = json.load(f)
-                cameras = data.get("cameras", [])
-        except FileNotFoundError:
+            if registry_path.exists():
+                with open(registry_path, "r", encoding="utf-8") as f:
+                    content = f.read().strip()
+                    if content:
+                        data = json.loads(content)
+                        cameras = data.get("cameras", [])
+        except Exception as e:
+            logger.error("Error reading camera registry: %s", e)
             cameras = []
 
         # Merge live connected mobile units
@@ -192,6 +205,258 @@ def create_app() -> FastAPI:
                 cameras.append(phone_cam)
 
         return {"cameras": cameras}
+
+    @app.post("/api/cameras")
+    async def add_camera_api(cam_data: dict):
+        if not engine:
+            raise HTTPException(status_code=500, detail="Surveillance engine not initialized")
+        cid = cam_data.get("camera_id")
+        if not cid:
+            raise HTTPException(status_code=400, detail="camera_id is required")
+
+        # Clean ID
+        cam_data["camera_id"] = cid.strip().replace(" ", "_").lower()
+        cam_data["enabled"] = True
+
+        success = engine.add_camera(cam_data)
+        if not success:
+            raise HTTPException(status_code=400, detail="Failed to add camera")
+
+        # Broadcast camera update to UI
+        await manager.broadcast_alert({
+            "alert_id": "SYS_CAM_UPDATE",
+            "timestamp": datetime.utcnow().isoformat(),
+            "section": 1,
+            "section_title": "System Status",
+            "camera_id": cam_data["camera_id"],
+            "location": cam_data.get("location", cam_data["camera_id"]),
+            "category": "System",
+            "priority": "BLUE",
+            "description": f"Camera node {cam_data['camera_id']} added and active.",
+            "group_size": 1,
+            "is_crossing": False,
+        })
+
+        return {"status": "ok", "camera_id": cam_data["camera_id"]}
+
+    @app.delete("/api/cameras/{camera_id}")
+    async def delete_camera_api(camera_id: str):
+        if not engine:
+            raise HTTPException(status_code=500, detail="Surveillance engine not initialized")
+
+        # If it's a mobile phone camera
+        if camera_id in active_phone_cameras:
+            active_phone_cameras.pop(camera_id, None)
+            return {"status": "ok", "removed": camera_id}
+
+        removed = engine.remove_camera(camera_id)
+        if not removed:
+            raise HTTPException(status_code=404, detail=f"Camera '{camera_id}' not found")
+
+        await manager.broadcast_alert({
+            "alert_id": "SYS_CAM_UPDATE",
+            "timestamp": datetime.utcnow().isoformat(),
+            "section": 1,
+            "section_title": "System Status",
+            "camera_id": camera_id,
+            "location": camera_id,
+            "category": "System",
+            "priority": "BLUE",
+            "description": f"Camera node {camera_id} removed.",
+            "group_size": 1,
+            "is_crossing": False,
+        })
+
+        return {"status": "ok", "removed": camera_id}
+
+    # ------------------------------------------------------------------
+    # REST endpoints: Persistent Event Store & Forensic Audit
+    # ------------------------------------------------------------------
+
+    @app.get("/api/events")
+    async def get_events_api(
+        limit: int = 50,
+        offset: int = 0,
+        category: Optional[str] = None,
+        priority: Optional[str] = None,
+        camera_id: Optional[str] = None,
+        search: Optional[str] = None,
+    ):
+        events = event_store.get_events(
+            limit=limit,
+            offset=offset,
+            category=category,
+            priority=priority,
+            camera_id=camera_id,
+            search=search,
+        )
+        total = event_store.get_event_count()
+        return {"events": events, "total": total}
+
+    @app.get("/api/events/export")
+    async def export_events_api(
+        format: str = "csv",
+        category: Optional[str] = None,
+        priority: Optional[str] = None,
+    ):
+        if format.lower() == "csv":
+            csv_data = event_store.export_csv(category=category, priority=priority)
+            return Response(
+                content=csv_data,
+                media_type="text/csv",
+                headers={"Content-Disposition": "attachment; filename=ibvap_incident_report.csv"},
+            )
+        else:
+            events = event_store.get_events(limit=5000, category=category, priority=priority)
+            return {"events": events}
+
+    @app.get("/api/events/{event_id}/snapshot")
+    async def get_snapshot_api(event_id: str):
+        b64_snap = event_store.get_snapshot(event_id)
+        if not b64_snap:
+            raise HTTPException(status_code=404, detail="Snapshot not found")
+        img_bytes = base64.b64decode(b64_snap)
+        return Response(content=img_bytes, media_type="image/jpeg")
+
+    @app.delete("/api/events")
+    async def clear_events_api():
+        event_store.clear_events()
+        return {"status": "ok", "message": "Audit event log cleared"}
+
+    # ------------------------------------------------------------------
+    # REST endpoints: System Control (Start / Stop / Reset)
+    # ------------------------------------------------------------------
+
+    @app.post("/api/system/stop")
+    async def system_stop():
+        """Pause all camera workers without removing them from the registry."""
+        if not engine:
+            raise HTTPException(status_code=500, detail="Engine not initialized")
+        for worker in engine.workers.values():
+            worker.is_running = False
+            if worker.task and not worker.task.done():
+                worker.task.cancel()
+        engine._is_running = False
+        await manager.broadcast_alert({
+            "alert_id": "SYS_CONTROL",
+            "timestamp": datetime.utcnow().isoformat(),
+            "section": 1, "section_title": "System Status",
+            "camera_id": "system", "location": "Command & Control",
+            "category": "System", "priority": "AMBER",
+            "description": "Surveillance engine STOPPED by operator.",
+            "group_size": 1, "is_crossing": False,
+        })
+        return {"status": "stopped"}
+
+    @app.post("/api/system/start")
+    async def system_start():
+        """Resume all camera workers from the registry."""
+        if not engine:
+            raise HTTPException(status_code=500, detail="Engine not initialized")
+        engine._is_running = True
+        # Restart any cancelled workers
+        for cid, worker in engine.workers.items():
+            if not worker.is_running or (worker.task and worker.task.done()):
+                worker.is_running = True
+                worker.task = asyncio.create_task(worker.run_loop())
+        await manager.broadcast_alert({
+            "alert_id": "SYS_CONTROL",
+            "timestamp": datetime.utcnow().isoformat(),
+            "section": 1, "section_title": "System Status",
+            "camera_id": "system", "location": "Command & Control",
+            "category": "System", "priority": "BLUE",
+            "description": "Surveillance engine STARTED by operator.",
+            "group_size": 1, "is_crossing": False,
+        })
+        return {"status": "running"}
+
+    @app.post("/api/system/reset")
+    async def system_reset():
+        """Full reset: clear all event logs, remove all cameras, restart engine fresh."""
+        if not engine:
+            raise HTTPException(status_code=500, detail="Engine not initialized")
+        # Stop and remove all camera workers
+        for worker in list(engine.workers.values()):
+            worker.is_running = False
+            if worker.task and not worker.task.done():
+                worker.task.cancel()
+        engine.workers.clear()
+        active_phone_cameras.clear()
+        # Clear persistent event store
+        event_store.clear_events()
+        # Wipe camera registry
+        engine._is_running = True
+        engine.save_registry()
+        await manager.broadcast_alert({
+            "alert_id": "SYS_RESET",
+            "timestamp": datetime.utcnow().isoformat(),
+            "section": 1, "section_title": "System Status",
+            "camera_id": "system", "location": "Command & Control",
+            "category": "System", "priority": "BLUE",
+            "description": "Full system RESET performed. All cameras and audit logs cleared.",
+            "group_size": 1, "is_crossing": False,
+        })
+        return {"status": "reset", "message": "System reset complete. Re-ingest cameras to restart surveillance."}
+
+    # ------------------------------------------------------------------
+    # REST endpoints: Watchlist Management & Face Photos (FRS & ANPR)
+    # ------------------------------------------------------------------
+
+    faces_dir = Path(__file__).resolve().parent.parent / "data" / "faces"
+    faces_dir.mkdir(parents=True, exist_ok=True)
+
+    @app.get("/api/faces/{filename}")
+    async def get_face_photo_api(filename: str):
+        safe_name = Path(filename).name
+        photo_path = faces_dir / safe_name
+        if not photo_path.exists():
+            raise HTTPException(status_code=404, detail="Face photo not found")
+        with open(photo_path, "rb") as f:
+            content = f.read()
+        return Response(content=content, media_type="image/jpeg")
+
+    @app.post("/api/watchlist/upload_photo")
+    async def upload_face_photo_api(payload: dict):
+        person_id = payload.get("person_id", "SUSP")
+        clean_pid = "".join(c for c in person_id if c.isalnum() or c in ("_", "-"))
+        img_b64 = payload.get("image_data") or payload.get("image_base64", "")
+        if not img_b64:
+            raise HTTPException(status_code=400, detail="No image data provided")
+
+        if "," in img_b64:
+            img_b64 = img_b64.split(",", 1)[1]
+
+        try:
+            img_bytes = base64.b64decode(img_b64)
+            filename = f"{clean_pid}_{uuid4().hex[:8]}.jpg"
+            save_path = faces_dir / filename
+            with open(save_path, "wb") as f:
+                f.write(img_bytes)
+
+            photo_url = f"/api/faces/{filename}"
+            return {"status": "ok", "url": photo_url, "filename": filename}
+        except Exception as e:
+            raise HTTPException(status_code=500, detail=f"Failed to save photo: {e}")
+
+    @app.get("/api/watchlist")
+    async def get_watchlist_api():
+        wl_path = Path(__file__).resolve().parent.parent / "config" / "watchlist.json"
+        if wl_path.exists():
+            with open(wl_path, "r") as f:
+                return json.load(f)
+        return {"suspect_plates": [], "suspect_faces": []}
+
+    @app.post("/api/watchlist")
+    async def update_watchlist_api(payload: dict):
+        wl_path = Path(__file__).resolve().parent.parent / "config" / "watchlist.json"
+        with open(wl_path, "w") as f:
+            json.dump(payload, f, indent=2)
+
+        # Dynamically reload facial gallery on surveillance coordinators
+        if engine and hasattr(engine, "reload_watchlist"):
+            engine.reload_watchlist()
+
+        return {"status": "ok"}
 
     # ------------------------------------------------------------------
     # WebSocket: frame streaming
@@ -222,7 +487,7 @@ def create_app() -> FastAPI:
             logger.info("[WS] Alert subscriber disconnected")
 
     # ------------------------------------------------------------------
-    # Phase 7: Ultra-Smooth Phone Stream Ingestion with 6-Section Intel
+    # Mobile Camera / Patrol Unit Ingestion with IBVAP AI Suite
     # ------------------------------------------------------------------
 
     @app.websocket("/ws/phone/{client_id}")
@@ -230,7 +495,7 @@ def create_app() -> FastAPI:
         await websocket.accept()
         camera_id = f"phone_{client_id}"
         location = f"Mobile Patrol Unit ({client_id})"
-        logger.info("[Phone] Mobile camera connected: %s", camera_id)
+        logger.info("[Phone] Mobile patrol camera connected: %s", camera_id)
 
         active_phone_cameras[camera_id] = {
             "camera_id": camera_id,
@@ -239,7 +504,7 @@ def create_app() -> FastAPI:
             "enabled": True,
         }
 
-        # Broadcast camera list update to all alert subscribers
+        # Broadcast camera list update
         await manager.broadcast_alert({
             "alert_id": "SYS_CAM_UPDATE",
             "timestamp": datetime.utcnow().isoformat(),
@@ -257,7 +522,11 @@ def create_app() -> FastAPI:
         phone_tracker = WithinCameraTracker(camera_id)
         night_switcher = NightSwitcher(camera_id)
         motion_detector = Tier3MotionDetector(camera_id)
-        section_coordinator = SectionCoordinator(camera_id, location, reid_matcher=engine.reid_matcher if engine else None)
+        section_coordinator = SectionCoordinator(
+            camera_id=camera_id,
+            location=location,
+            reid_matcher=engine.reid_matcher if engine else None,
+        )
 
         frame_queue: asyncio.Queue[str] = asyncio.Queue(maxsize=1)
         running = True
@@ -271,7 +540,7 @@ def create_app() -> FastAPI:
                     return None, []
 
                 h, w = img.shape[:2]
-                boundary_line = ((0, h // 2), (w, h // 2))
+                boundary_line = ((0, int(h * 0.52)), (w, int(h * 0.52)))
 
                 frame_obj = Frame(
                     camera_id=camera_id,
@@ -287,7 +556,7 @@ def create_app() -> FastAPI:
                 conf = settings.detection.night_confidence if is_night else settings.detection.day_confidence
                 t1_dets = engine.detector_t1.detect(proc_frame, confidence=conf) if engine else []
 
-                # 3. Tier 3: Verified unidentified object motion
+                # 3. Tier 3: Motion catch-all
                 t3_dets = motion_detector.detect(proc_frame)
 
                 # 4. Merge Tiers
@@ -296,43 +565,27 @@ def create_app() -> FastAPI:
                 # 5. Tracking
                 tracked_dets = phone_tracker.update(merged_dets, proc_frame.shape)
 
-                # 6. Check virtual boundary crossings
-                crossing_ids = set()
-                mid_y = h // 2
-                for d in tracked_dets:
-                    if d.track_id is not None and abs(d.cy - mid_y) < (h * 0.09):
-                        crossing_ids.add(d.track_id)
-
-                # 7. Multi-Section Intelligence Analysis (Sections 1-6)
+                # 6. IBVAP AI Suite (FRS, ANPR, Virtual Fence, Suspicious Activity, Night Movement)
                 alerts = section_coordinator.process(
                     proc_frame,
                     t1_dets,
                     t3_dets,
                     tracked_dets,
                     boundary_line=boundary_line,
+                    is_night=is_night,
                 )
 
-                # 8. Visualization
+                # 7. Visualization
                 annotated = draw_detections(
                     proc_frame,
                     tracked_dets,
                     boundary_line=boundary_line,
-                    crossing_ids=crossing_ids,
+                    crossing_ids=section_coordinator.virtual_fence._breached_tracks,
+                    show_tier=False,
+                    is_night=is_night,
                 )
 
-                mode_badge = f"NIGHT (CLAHE) - Lum: {avg_lum:.0f}" if is_night else f"DAY - Lum: {avg_lum:.0f}"
-                cv2.putText(
-                    annotated,
-                    f"LIVE PATROL | {mode_badge} | {len(tracked_dets)} Tracks",
-                    (8, 45),
-                    cv2.FONT_HERSHEY_SIMPLEX,
-                    0.45,
-                    (0, 255, 255) if is_night else (100, 255, 100),
-                    1,
-                    cv2.LINE_AA,
-                )
-
-                jpeg_bytes = encode_jpeg(annotated, quality=55)
+                jpeg_bytes = encode_jpeg(annotated, quality=60)
                 return jpeg_bytes, alerts
             except Exception as e:
                 logger.error("[Phone Frame Error] %s", e)
@@ -350,14 +603,13 @@ def create_app() -> FastAPI:
                 except asyncio.CancelledError:
                     break
                 except Exception as exc:
-                    logger.debug("[Worker Exception] %s", exc)
+                    logger.debug("[Phone Worker Exception] %s", exc)
 
         worker_task = asyncio.create_task(worker_loop())
 
         try:
             while True:
                 data = await websocket.receive_text()
-                # Single-slot queue: replace older unconsumed frame to maintain 0 lag
                 if frame_queue.full():
                     try:
                         frame_queue.get_nowait()
@@ -376,7 +628,7 @@ def create_app() -> FastAPI:
             active_phone_cameras.pop(camera_id, None)
 
     # ------------------------------------------------------------------
-    # Phase 7: Serve phone capture HTML page
+    # Serve phone capture HTML page
     # ------------------------------------------------------------------
 
     @app.get("/phone_stream.html", response_class=HTMLResponse)
@@ -409,8 +661,8 @@ def create_app() -> FastAPI:
         @app.get("/")
         async def root():
             return {
-                "service": "Border Surveillance System",
-                "version": "0.3.0",
+                "service": "IBVAP — Intelligent Border Video Analytics Platform",
+                "version": "1.0.0",
                 "status": "online",
             }
 
