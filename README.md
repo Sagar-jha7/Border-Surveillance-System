@@ -130,9 +130,3 @@ The Border Surveillance System is an intelligent video analytics platform design
 - Keep systems and dependencies updated
 - Implement access control and user authentication
 - Regular security audits recommended
-
----
-
-**Last Updated**: September 2026
-
-For the latest updates and information, visit the [GitHub Repository](https://github.com/Sagar-jha7/Border-Surveillance-System)
