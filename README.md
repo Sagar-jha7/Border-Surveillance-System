@@ -1,12 +1,6 @@
 # Border Surveillance System
-
 An AI-Based Intelligent Video Analytics Platform for Border Surveillance using existing CCTV Infrastructure
-
-![Python](https://img.shields.io/badge/Python-67.5%25-3776ab?style=flat-square&logo=python)
-![JavaScript](https://img.shields.io/badge/JavaScript-29.2%25-f7df1e?style=flat-square&logo=javascript)
-![HTML](https://img.shields.io/badge/HTML-3.2%25-e34c26?style=flat-square&logo=html5)
-![License](https://img.shields.io/badge/License-MIT-green?style=flat-square)
-
+---
 ## Overview
 
 The Border Surveillance System is an intelligent video analytics platform designed to enhance border security by leveraging existing CCTV infrastructure. It combines cutting-edge AI and machine learning technologies to detect, track, and alert security personnel of potential threats and anomalies in real-time.
@@ -25,26 +19,13 @@ The Border Surveillance System is an intelligent video analytics platform design
 ## Technology Stack
 
 ### Backend
-- **Python** (67.5%) - Core AI/ML algorithms, video processing, and backend services
-  - Computer Vision (OpenCV, PyTorch/TensorFlow)
-  - Real-time Processing
+- **Python** - Core AI/ML algorithms, video processing, and backend services
+  - Computer Vision
   - REST API
 
 ### Frontend
-- **JavaScript** (29.2%) - Interactive dashboard and user interface
-- **HTML/CSS** (3.3%) - Web interface structure and styling
-
-## Project Structure
-
-```
-Border-Surveillance-System/
-├── backend/              # Python backend services
-├── frontend/             # JavaScript/HTML/CSS frontend
-├── models/               # Pre-trained AI models
-├── config/               # Configuration files
-├── docs/                 # Documentation
-└── README.md             # This file
-```
+- **JavaScript** - Interactive dashboard and user interface
+- **HTML/CSS**  - Web interface structure and styling
 
 ## Getting Started
 
@@ -120,30 +101,6 @@ Border-Surveillance-System/
 - Historical data analysis
 - System configuration and management
 
-## Configuration
-
-Key configuration parameters in `config/config.json`:
-
-```json
-{
-  "cameras": [
-    {
-      "id": "cam_01",
-      "url": "rtsp://camera_ip:port/stream",
-      "name": "Border Checkpoint A"
-    }
-  ],
-  "detection": {
-    "confidence_threshold": 0.7,
-    "fps": 30
-  },
-  "alerts": {
-    "enabled": true,
-    "notification_channels": ["email", "app"]
-  }
-}
-```
-
 ## API Endpoints
 
 ### Video Feeds
@@ -166,41 +123,6 @@ Key configuration parameters in `config/config.json`:
 - **Concurrent Streams**: Support for multiple simultaneous feeds
 - **Uptime**: 24/7 monitoring capability
 
-## Contributing
-
-We welcome contributions to improve the Border Surveillance System! Please follow these steps:
-
-1. Fork the repository
-2. Create a feature branch (`git checkout -b feature/AmazingFeature`)
-3. Commit your changes (`git commit -m 'Add some AmazingFeature'`)
-4. Push to the branch (`git push origin feature/AmazingFeature`)
-5. Open a Pull Request
-
-## Issues & Bug Reports
-
-If you encounter any issues or bugs, please open an issue on GitHub with:
-- Clear description of the problem
-- Steps to reproduce
-- Expected vs actual behavior
-- System specifications
-
-## Documentation
-
-For detailed documentation, please refer to:
-- [Installation Guide](./docs/INSTALLATION.md)
-- [Configuration Guide](./docs/CONFIGURATION.md)
-- [API Documentation](./docs/API.md)
-- [User Manual](./docs/USER_MANUAL.md)
-
-## Roadmap
-
-- [ ] Enhanced deep learning models for improved accuracy
-- [ ] Mobile app for remote monitoring
-- [ ] Cloud integration and storage
-- [ ] Advanced analytics and reporting
-- [ ] Multi-language support
-- [ ] Integration with external security systems
-
 ## Security Considerations
 
 - Ensure CCTV feeds are accessed over secure connections (HTTPS/RTSP)
@@ -208,31 +130,6 @@ For detailed documentation, please refer to:
 - Keep systems and dependencies updated
 - Implement access control and user authentication
 - Regular security audits recommended
-
-## License
-
-This project is licensed under the MIT License - see the [LICENSE](LICENSE) file for details.
-
-## Authors
-
-- **Sagar Jha** - Project Lead and Developer
-
-## Acknowledgments
-
-- Computer vision and AI/ML communities
-- CCTV camera manufacturers for compatibility
-- Contributors and testers
-
-## Support & Contact
-
-For questions, feedback, or support:
-- Open an issue on GitHub
-- Check existing documentation
-- Contact the development team
-
-## Disclaimer
-
-This system is designed for lawful surveillance purposes and should comply with all applicable privacy laws and regulations in your jurisdiction. Users are responsible for ensuring compliance with local, state, and federal laws regarding video surveillance.
 
 ---
 
