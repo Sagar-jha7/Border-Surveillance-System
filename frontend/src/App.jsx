@@ -9,8 +9,11 @@ import { useSystemWebSocket } from "./hooks/useSystemWebSocket";
 import { useAlarmBeep } from "./hooks/useAlarmBeep";
 
 // Centralized API Base URL configuration
-const API_BASE_URL = import.meta.env.VITE_API_BASE_URL || "https://border-surveillance-api.onrender.com";
-
+// In useSystemWebSocket.js and App.jsx:
+const API_BASE_URL = 
+  import.meta.env.VITE_API_BASE_URL && import.meta.env.VITE_API_BASE_URL.trim() !== ""
+    ? import.meta.env.VITE_API_BASE_URL
+    : "https://border-surveillance-api.onrender.com";
 /**
  * IBVAP Root Dashboard Component.
  * Intelligent Border Video Analytics Platform (SIH26187 / BSF / MHA).
