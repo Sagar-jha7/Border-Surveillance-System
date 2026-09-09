@@ -68,7 +68,7 @@ export default function AddCameraModal({ isOpen, onClose, onCameraAdded }) {
       onClose();
     } catch (err) {
       setError(err.message);
-    } fontally {
+    } finally {
       setLoading(false);
     }
   };
