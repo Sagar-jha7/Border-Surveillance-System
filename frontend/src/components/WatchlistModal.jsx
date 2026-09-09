@@ -1,3 +1,4 @@
+const API_BASE_URL = import.meta.env.VITE_API_BASE_URL || "https://border-surveillance-api.onrender.com";
 import React, { useState, useEffect, useRef } from 'react';
 import { ShieldAlert, User, Car, Plus, X, Trash2, CheckCircle2, Camera, Image, Upload, Eye, AlertTriangle } from 'lucide-react';
 
