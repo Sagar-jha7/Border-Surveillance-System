@@ -1,6 +1,6 @@
 # Core detection / pipeline dependencies
 ultralytics>=8.2.0
-opencv-python>=4.9.0
+opencv-python-headless>=4.9.0
 numpy>=1.26.0
 supervision>=0.21.0
 
@@ -14,12 +14,9 @@ pydantic>=2.0.0
 # Phase 3+ (SAHI slicing, drone detection)
 sahi>=0.11.19
 
-# Phase 4+ (night mode)
-# opencv-python already includes CLAHE — no extra dep
-
 # Phase 5+ (embeddings)
 insightface>=0.7.3
-onnxruntime>=1.18.0         # required by insightface
+onnxruntime>=1.18.0
 torchreid>=1.4.0
 
 # Utilities
