@@ -3,12 +3,40 @@ import { ShieldAlert, User, Car, Plus, X, Trash2, CheckCircle2, Camera, Upload, 
 
 const API_BASE_URL = import.meta.env.VITE_API_BASE_URL || "https://border-surveillance-api.onrender.com";
 
-// Helper utility to read File objects as Data URLs asynchronously
-const readFileAsDataURL = (file) => {
+// Helper utility to read and compress File objects as scaled JPEG Data URLs
+const readFileAndCompress = (file, maxWidth = 800, quality = 0.75) => {
   return new Promise((resolve, reject) => {
     const reader = new FileReader();
-    reader.onload = (e) => resolve(e.target?.result);
     reader.onerror = (err) => reject(err);
+    reader.onload = (e) => {
+      const img = new Image();
+      img.onerror = (err) => reject(err);
+      img.onload = () => {
+        let width = img.width;
+        let height = img.height;
+
+        if (width > maxWidth || height > maxWidth) {
+          if (width > height) {
+            height = Math.round((height * maxWidth) / width);
+            width = maxWidth;
+          } else {
+            width = Math.round((width * maxWidth) / height);
+            height = maxWidth;
+          }
+        }
+
+        const canvas = document.createElement('canvas');
+        canvas.width = width;
+        canvas.height = height;
+        const ctx = canvas.getContext('2d');
+        ctx.drawImage(img, 0, 0, width, height);
+
+        // Export as lightweight JPEG data URL
+        const compressedDataUrl = canvas.toDataURL('image/jpeg', quality);
+        resolve(compressedDataUrl);
+      };
+      img.src = e.target?.result;
+    };
     reader.readAsDataURL(file);
   });
 };
@@ -75,10 +103,8 @@ export default function WatchlistModal({ isOpen, onClose }) {
       setLoading(false);
     }
   };
-
   // -------------------------------------------------------------------------
   // BOLO Plate Handlers
-  // -------------------------------------------------------------------------
   const handleAddPlate = (e) => {
     e.preventDefault();
     if (!newPlate.trim()) return;
@@ -102,14 +128,16 @@ export default function WatchlistModal({ isOpen, onClose }) {
 
   // -------------------------------------------------------------------------
   // Multi-Photo FRS Enrolment Handlers
-  // -------------------------------------------------------------------------
   const handlePhotosSelected = async (e) => {
     const files = Array.from(e.target.files || []);
     if (!files.length) return;
 
     try {
-      const base64Results = await Promise.all(files.map((file) => readFileAsDataURL(file)));
-      setNewFacePhotos((prev) => [...prev, ...base64Results.filter(Boolean)]);
+      // Compress selected photo files prior to state storage
+      const compressedResults = await Promise.all(
+        files.map((file) => readFileAndCompress(file))
+      );
+      setNewFacePhotos((prev) => [...prev, ...compressedResults.filter(Boolean)]);
     } catch (err) {
       console.error('Failed to process reference images:', err);
     } finally {
@@ -181,8 +209,8 @@ export default function WatchlistModal({ isOpen, onClose }) {
 
     setLoading(true);
     try {
-      const dataUrl = await readFileAsDataURL(file);
-      if (!dataUrl) return;
+      const compressedDataUrl = await readFileAndCompress(file);
+      if (!compressedDataUrl) return;
 
       const targetSuspect = suspectFaces[targetAppendIdx];
       const res = await fetch(`${API_BASE_URL}/api/watchlist/upload_photo`, {
@@ -190,7 +218,7 @@ export default function WatchlistModal({ isOpen, onClose }) {
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           person_id: targetSuspect.id || 'SUSP',
-          image_data: dataUrl,
+          image_data: compressedDataUrl,
         }),
       });
 
