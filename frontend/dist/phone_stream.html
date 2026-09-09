@@ -117,8 +117,13 @@
     const httpsNotice = document.getElementById('httpsNotice');
     const fpsInfo = document.getElementById('fps-info');
 
+    // Dynamic backend domain detection for development vs Render deployment
+    const BACKEND_HOST = location.hostname === 'localhost' || location.hostname === '127.0.0.1'
+      ? 'localhost:8000'
+      : 'border-surveillance-api.onrender.com';
+
     const TARGET_FPS = 15;
-    const QUALITY = 0.45; // lightweight JPEG for zero latency
+    const QUALITY = 0.45; // lightweight JPEG for low latency
     const STREAM_WIDTH = 640;
     const STREAM_HEIGHT = 480;
 
@@ -148,9 +153,7 @@
     }
 
     function switchToHttps() {
-      const localDevPort = location.port === '3000' || location.port === '8000';
-      const host = localDevPort ? `${location.hostname}:8443` : location.host;
-      const httpsUrl = 'https://' + host + location.pathname;
+      const httpsUrl = 'https://' + location.host + location.pathname;
       location.href = httpsUrl;
     }
 
@@ -226,7 +229,9 @@
       const clientId = document.getElementById('clientId').value.trim() || 'phone_01';
       const isHttps = location.protocol === 'https:';
       const wsProtocol = isHttps ? 'wss:' : 'ws:';
-      const wsUrl = `${wsProtocol}//${location.host}/ws/phone/${clientId}`;
+      
+      // Connect specifically to the FastAPI backend API host
+      const wsUrl = `${wsProtocol}//${BACKEND_HOST}/ws/phone/${clientId}`;
 
       try {
         stream = await getCameraStream();
@@ -241,7 +246,7 @@
         return;
       }
 
-      setStatus(`Connecting to backend...`, '');
+      setStatus(`Connecting to backend (${BACKEND_HOST})...`, '');
 
       try {
         ws = new WebSocket(wsUrl);
