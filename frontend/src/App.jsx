@@ -59,9 +59,11 @@ export default function App() {
     let cancelled = false;
     async function loadMobileStreamInfo() {
       try {
-        const res = await fetch(`${API_BASE_URL}/mobile-stream-info`);
+        // Prefixed with /api and safely handled raw text before JSON parse
+        const res = await fetch(`${API_BASE_URL}/api/mobile-stream-info`);
         if (!res.ok) return;
-        const info = await res.json();
+        const text = await res.text();
+        const info = text ? JSON.parse(text) : {};
         if (!cancelled && info.https_url) setMobileStreamUrl(info.https_url);
       } catch (err) {
         console.warn("Mobile stream info unavailable, using browser host fallback.", err);
