@@ -610,6 +610,9 @@ def create_app() -> FastAPI:
         try:
             while True:
                 data = await websocket.receive_text()
+                # Ignore keepalive pings sent by client (needed for Render's 60s WS timeout)
+                if data == "__ping__":
+                    continue
                 if frame_queue.full():
                     try:
                         frame_queue.get_nowait()
