@@ -1,23 +1,34 @@
-const API_BASE_URL = import.meta.env.VITE_API_BASE_URL || "https://border-surveillance-api.onrender.com";
 import React, { useState, useEffect, useRef } from 'react';
-import { ShieldAlert, User, Car, Plus, X, Trash2, CheckCircle2, Camera, Image, Upload, Eye, AlertTriangle } from 'lucide-react';
+import { ShieldAlert, User, Car, Plus, X, Trash2, CheckCircle2, Camera, Upload, Eye, AlertTriangle } from 'lucide-react';
+
+const API_BASE_URL = import.meta.env.VITE_API_BASE_URL || "https://border-surveillance-api.onrender.com";
+
+// Helper utility to read File objects as Data URLs asynchronously
+const readFileAsDataURL = (file) => {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onload = (e) => resolve(e.target?.result);
+    reader.onerror = (err) => reject(err);
+    reader.readAsDataURL(file);
+  });
+};
 
 export default function WatchlistModal({ isOpen, onClose }) {
-  const [activeTab, setActiveTab] = useState('faces'); // Default to faces tab for FRS focus
+  const [activeTab, setActiveTab] = useState('faces');
   const [suspectPlates, setSuspectPlates] = useState([]);
   const [suspectFaces, setSuspectFaces] = useState([]);
   const [loading, setLoading] = useState(false);
 
-  // New Plate inputs
+  // Plate inputs
   const [newPlate, setNewPlate] = useState('');
   const [plateReason, setPlateReason] = useState('');
   const [platePriority, setPlatePriority] = useState('RED');
 
-  // New Face inputs & multi-photo selection
+  // Face inputs & multi-photo selection
   const [newFaceName, setNewFaceName] = useState('');
   const [faceNotes, setFaceNotes] = useState('');
   const [facePriority, setFacePriority] = useState('RED');
-  const [newFacePhotos, setNewFacePhotos] = useState([]); // Array of base64 data URLs
+  const [newFacePhotos, setNewFacePhotos] = useState([]);
   const [previewPhotoUrl, setPreviewPhotoUrl] = useState(null);
 
   const fileInputRef = useRef(null);
@@ -26,7 +37,7 @@ export default function WatchlistModal({ isOpen, onClose }) {
 
   const fetchWatchlist = async () => {
     try {
-      const res = await fetch('/api/watchlist');
+      const res = await fetch(`${API_BASE_URL}/api/watchlist`);
       if (res.ok) {
         const data = await res.json();
         setSuspectPlates(data.suspect_plates || []);
@@ -48,7 +59,7 @@ export default function WatchlistModal({ isOpen, onClose }) {
   const saveWatchlist = async (updatedPlates, updatedFaces) => {
     setLoading(true);
     try {
-      await fetch('/api/watchlist', {
+      await fetch(`${API_BASE_URL}/api/watchlist`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
@@ -92,22 +103,17 @@ export default function WatchlistModal({ isOpen, onClose }) {
   // -------------------------------------------------------------------------
   // Multi-Photo FRS Enrolment Handlers
   // -------------------------------------------------------------------------
-  const handlePhotosSelected = (e) => {
+  const handlePhotosSelected = async (e) => {
     const files = Array.from(e.target.files || []);
     if (!files.length) return;
 
-    files.forEach((file) => {
-      const reader = new FileReader();
-      reader.onload = (loadEvt) => {
-        if (loadEvt.target?.result) {
-          setNewFacePhotos((prev) => [...prev, loadEvt.target.result]);
-        }
-      };
-      reader.readAsDataURL(file);
-    });
-
-    if (fileInputRef.current) {
-      fileInputRef.current.value = '';
+    try {
+      const base64Results = await Promise.all(files.map((file) => readFileAsDataURL(file)));
+      setNewFacePhotos((prev) => [...prev, ...base64Results.filter(Boolean)]);
+    } catch (err) {
+      console.error('Failed to process reference images:', err);
+    } finally {
+      if (fileInputRef.current) fileInputRef.current.value = '';
     }
   };
 
@@ -124,10 +130,9 @@ export default function WatchlistModal({ isOpen, onClose }) {
     const uploadedUrls = [];
 
     try {
-      // Upload each reference photo to backend
       for (let i = 0; i < newFacePhotos.length; i++) {
         const photoData = newFacePhotos[i];
-        const res = await fetch('/api/watchlist/upload_photo', {
+        const res = await fetch(`${API_BASE_URL}/api/watchlist/upload_photo`, {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({
@@ -137,9 +142,7 @@ export default function WatchlistModal({ isOpen, onClose }) {
         });
         if (res.ok) {
           const out = await res.json();
-          if (out.url) {
-            uploadedUrls.push(out.url);
-          }
+          if (out.url) uploadedUrls.push(out.url);
         }
       }
 
@@ -155,7 +158,6 @@ export default function WatchlistModal({ isOpen, onClose }) {
       const updated = [...suspectFaces, newSuspect];
       await saveWatchlist(suspectPlates, updated);
 
-      // Reset form
       setNewFaceName('');
       setFaceNotes('');
       setNewFacePhotos([]);
@@ -166,7 +168,6 @@ export default function WatchlistModal({ isOpen, onClose }) {
     }
   };
 
-  // Add photo to existing suspect profile
   const handleTriggerAppendPhoto = (idx) => {
     setTargetAppendIdx(idx);
     if (appendFileInputRef.current) {
@@ -180,39 +181,36 @@ export default function WatchlistModal({ isOpen, onClose }) {
 
     setLoading(true);
     try {
-      const reader = new FileReader();
-      reader.onload = async (loadEvt) => {
-        const dataUrl = loadEvt.target?.result;
-        if (!dataUrl) return;
+      const dataUrl = await readFileAsDataURL(file);
+      if (!dataUrl) return;
 
-        const targetSuspect = suspectFaces[targetAppendIdx];
-        const res = await fetch('/api/watchlist/upload_photo', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({
-            person_id: targetSuspect.id || 'SUSP',
-            image_data: dataUrl,
-          }),
-        });
+      const targetSuspect = suspectFaces[targetAppendIdx];
+      const res = await fetch(`${API_BASE_URL}/api/watchlist/upload_photo`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          person_id: targetSuspect.id || 'SUSP',
+          image_data: dataUrl,
+        }),
+      });
 
-        if (res.ok) {
-          const out = await res.json();
-          if (out.url) {
-            const updated = [...suspectFaces];
-            const currentPhotos = updated[targetAppendIdx].photos || [];
-            updated[targetAppendIdx] = {
-              ...updated[targetAppendIdx],
-              photos: [...currentPhotos, out.url],
-            };
-            await saveWatchlist(suspectPlates, updated);
-          }
+      if (res.ok) {
+        const out = await res.json();
+        if (out.url) {
+          const updated = [...suspectFaces];
+          const currentPhotos = updated[targetAppendIdx].photos || [];
+          updated[targetAppendIdx] = {
+            ...updated[targetAppendIdx],
+            photos: [...currentPhotos, out.url],
+          };
+          await saveWatchlist(suspectPlates, updated);
         }
-        setTargetAppendIdx(null);
-        setLoading(false);
-      };
-      reader.readAsDataURL(file);
+      }
     } catch (err) {
       console.error('Failed to append photo:', err);
+    } finally {
+      setTargetAppendIdx(null);
+      if (appendFileInputRef.current) appendFileInputRef.current.value = '';
       setLoading(false);
     }
   };
@@ -632,4 +630,3 @@ export default function WatchlistModal({ isOpen, onClose }) {
     </div>
   );
 }
-
