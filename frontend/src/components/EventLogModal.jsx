@@ -13,6 +13,10 @@ import {
   ExternalLink,
 } from 'lucide-react';
 
+const API_BASE_URL =
+  import.meta.env.VITE_API_URL ||
+  'https://border-surveillance-api.onrender.com';
+
 export default function EventLogModal({ isOpen, onClose }) {
   const [events, setEvents] = useState([]);
   const [totalCount, setTotalCount] = useState(0);
@@ -31,7 +35,7 @@ export default function EventLogModal({ isOpen, onClose }) {
       if (categoryFilter !== 'ALL') params.set('category', categoryFilter);
       if (searchTerm.trim()) params.set('search', searchTerm.trim());
 
-      const res = await fetch(`/api/events?${params.toString()}`);
+      const res = await fetch(`${API_BASE_URL}/api/events?${params.toString()}`);
       if (res.ok) {
         const data = await res.json();
         setEvents(data.events || []);
@@ -53,13 +57,13 @@ export default function EventLogModal({ isOpen, onClose }) {
   if (!isOpen) return null;
 
   const handleExportCSV = () => {
-    const url = `/api/events/export?format=csv&priority=${priorityFilter}&category=${categoryFilter}`;
+    const url = `${API_BASE_URL}/api/events/export?format=csv&priority=${priorityFilter}&category=${categoryFilter}`;
     window.open(url, '_blank');
   };
 
   const handleClearLog = async () => {
     if (window.confirm('Are you sure you want to clear all forensic incident logs?')) {
-      await fetch('/api/events', { method: 'DELETE' });
+      await fetch(`${API_BASE_URL}/api/events`, { method: 'DELETE' });
       fetchEvents();
     }
   };
@@ -252,7 +256,7 @@ export default function EventLogModal({ isOpen, onClose }) {
               </div>
               <div className="bg-black rounded-lg overflow-hidden border border-slate-800 max-h-[60vh] flex items-center justify-center">
                 <img
-                  src={`/api/events/${selectedSnapshot}/snapshot`}
+                  src={`${API_BASE_URL}/api/events/${selectedSnapshot}/snapshot`}
                   alt="Incident snapshot"
                   className="max-h-full max-w-full object-contain"
                 />

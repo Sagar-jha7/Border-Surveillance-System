@@ -1,11 +1,26 @@
 import React, { useState } from 'react';
-import { Video, X, Plus, Radio, Server, Shield, CheckCircle2 } from 'lucide-react';
+import { Video, X, Plus, Radio, Server, Shield, AlertTriangle } from 'lucide-react';
+
+// Force absolute API base URL (guards against empty strings or missing protocol prefixes)
+const getApiBaseUrl = () => {
+  const rawApiUrl = import.meta.env.VITE_API_BASE_URL || import.meta.env.VITE_API_URL;
+  if (
+    rawApiUrl &&
+    typeof rawApiUrl === 'string' &&
+    rawApiUrl.trim().startsWith('http')
+  ) {
+    return rawApiUrl.trim().replace(/\/+$/, '');
+  }
+  return 'https://border-surveillance-api.onrender.com';
+};
+
+const API_BASE_URL = getApiBaseUrl();
 
 export default function AddCameraModal({ isOpen, onClose, onCameraAdded }) {
   const [cameraId, setCameraId] = useState('');
   const [location, setLocation] = useState('');
-  const [sourceType, setSourceType] = useState('webcam'); // 'webcam', 'rtsp', 'http', 'file'
-  const [sourceVal, setSourceVal] = useState('0');
+  const [sourceType, setSourceType] = useState('http'); // Default to HTTP feed for cloud deployments
+  const [sourceVal, setSourceVal] = useState(`${API_BASE_URL}/phone_stream.html`);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState(null);
 
@@ -13,17 +28,36 @@ export default function AddCameraModal({ isOpen, onClose, onCameraAdded }) {
 
   const handleSourceTypeChange = (type) => {
     setSourceType(type);
-    if (type === 'webcam') setSourceVal('0');
-    else if (type === 'rtsp') setSourceVal('rtsp://192.168.1.100:554/stream1');
-    else if (type === 'http') setSourceVal('http://192.168.1.100:8080/video');
+    if (type === 'webcam') {
+      setSourceVal('0');
+    } else if (type === 'rtsp') {
+      setSourceVal('rtsp://192.168.1.100:554/stream1');
+    } else if (type === 'http') {
+      setSourceVal(`${API_BASE_URL}/phone_stream.html`);
+    }
   };
 
   const handleSubmit = async (e) => {
     e.preventDefault();
     setError(null);
+
+    // Guard: Warn if user tries to use device index 0 on cloud hosting
+    if (sourceType === 'webcam' && (sourceVal === '0' || sourceVal === '1')) {
+      if (window.location.hostname.includes('onrender.com')) {
+        setError(
+          'Local USB devices (index 0/1) cannot be accessed directly by the cloud server. Please use the HTTP / MJPEG Feed or Mobile Stream URL.'
+        );
+        return;
+      }
+    }
+
     setLoading(true);
 
-    const cleanId = (cameraId.trim() || `cam_${Date.now().toString().slice(-4)}`).replace(/\s+/g, '_').toLowerCase();
+    const cleanId = (
+      cameraId.trim() || `cam_${Date.now().toString().slice(-4)}`
+    )
+      .replace(/\s+/g, '_')
+      .toLowerCase();
     const cleanLoc = location.trim() || `Border Post (${cleanId})`;
 
     let typeStr = 'webcam';
@@ -38,21 +72,32 @@ export default function AddCameraModal({ isOpen, onClose, onCameraAdded }) {
     };
 
     try {
-      const res = await fetch('/api/cameras', {
+      const res = await fetch(`${API_BASE_URL}/api/cameras`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(payload),
       });
 
-      if (!res.ok) {
-        const data = await res.json();
-        throw new Error(data.detail || 'Failed to add camera feed');
+      const contentType = res.headers.get('content-type');
+      if (res.ok && contentType && contentType.includes('application/json')) {
+        onCameraAdded && onCameraAdded();
+        onClose();
+      } else if (!res.ok) {
+        let errorMsg = `Server error (${res.status})`;
+        if (contentType && contentType.includes('application/json')) {
+          const data = await res.json();
+          errorMsg = data.detail || errorMsg;
+        }
+        throw new Error(errorMsg);
+      } else {
+        throw new Error('Backend returned non-JSON response.');
       }
-
-      onCameraAdded && onCameraAdded();
-      onClose();
     } catch (err) {
-      setError(err.message);
+      setError(
+        err.message === 'Failed to fetch'
+          ? `Unable to reach API server at ${API_BASE_URL}. Verify backend status.`
+          : err.message
+      );
     } finally {
       setLoading(false);
     }
@@ -71,7 +116,9 @@ export default function AddCameraModal({ isOpen, onClose, onCameraAdded }) {
               <h3 className="text-sm font-bold text-slate-100 uppercase tracking-wider">
                 Ingest New Surveillance Camera
               </h3>
-              <p className="text-[11px] text-slate-400">Connect IP CCTV, local USB webcam, or RTSP border stream</p>
+              <p className="text-[11px] text-slate-400">
+                Connect IP CCTV, RTSP feed, or mobile web stream
+              </p>
             </div>
           </div>
           <button
@@ -85,8 +132,9 @@ export default function AddCameraModal({ isOpen, onClose, onCameraAdded }) {
         {/* Form Body */}
         <form onSubmit={handleSubmit} className="p-5 flex flex-col gap-4">
           {error && (
-            <div className="bg-rose-950/60 border border-rose-700 p-3 rounded-lg text-xs text-rose-300">
-              ⚠️ {error}
+            <div className="bg-rose-950/60 border border-rose-700 p-3 rounded-lg text-xs text-rose-300 flex items-start gap-2">
+              <AlertTriangle className="w-4 h-4 shrink-0 text-rose-400 mt-0.5" />
+              <span>{error}</span>
             </div>
           )}
 
@@ -126,17 +174,19 @@ export default function AddCameraModal({ isOpen, onClose, onCameraAdded }) {
             <div className="grid grid-cols-1 sm:grid-cols-3 gap-2 text-xs">
               <button
                 type="button"
-                onClick={() => handleSourceTypeChange('webcam')}
+                onClick={() => handleSourceTypeChange('http')}
                 className={`p-2.5 rounded-lg border text-left flex flex-col gap-1 transition ${
-                  sourceType === 'webcam'
+                  sourceType === 'http'
                     ? 'bg-blue-950/60 border-blue-500 text-blue-300'
                     : 'bg-slate-950 border-slate-800 text-slate-400 hover:border-slate-700'
                 }`}
               >
                 <span className="font-bold flex items-center gap-1.5">
-                  <Radio className="w-3.5 h-3.5" /> Local USB / Webcam
+                  <Video className="w-3.5 h-3.5" /> Mobile / Web Stream
                 </span>
-                <span className="text-[10px] text-slate-500">Device index (0, 1)</span>
+                <span className="text-[10px] text-slate-500">
+                  HTTP / WebSocket Feed
+                </span>
               </button>
 
               <button
@@ -151,22 +201,26 @@ export default function AddCameraModal({ isOpen, onClose, onCameraAdded }) {
                 <span className="font-bold flex items-center gap-1.5">
                   <Server className="w-3.5 h-3.5" /> IP Camera (RTSP)
                 </span>
-                <span className="text-[10px] text-slate-500">Standard RTSP stream</span>
+                <span className="text-[10px] text-slate-500">
+                  Standard RTSP URL
+                </span>
               </button>
 
               <button
                 type="button"
-                onClick={() => handleSourceTypeChange('http')}
+                onClick={() => handleSourceTypeChange('webcam')}
                 className={`p-2.5 rounded-lg border text-left flex flex-col gap-1 transition ${
-                  sourceType === 'http'
+                  sourceType === 'webcam'
                     ? 'bg-blue-950/60 border-blue-500 text-blue-300'
                     : 'bg-slate-950 border-slate-800 text-slate-400 hover:border-slate-700'
                 }`}
               >
                 <span className="font-bold flex items-center gap-1.5">
-                  <Video className="w-3.5 h-3.5" /> HTTP / MJPEG Feed
+                  <Radio className="w-3.5 h-3.5" /> Local Hardware
                 </span>
-                <span className="text-[10px] text-slate-500">IP Webcam URL</span>
+                <span className="text-[10px] text-slate-500">
+                  Local USB Index
+                </span>
               </button>
             </div>
           </div>
@@ -174,7 +228,9 @@ export default function AddCameraModal({ isOpen, onClose, onCameraAdded }) {
           {/* Source Value Input */}
           <div>
             <label className="text-xs font-semibold text-slate-300 block mb-1">
-              {sourceType === 'webcam' ? 'Webcam Device Index (e.g., 0 for default PC camera):' : 'Live Stream Network URL:'}
+              {sourceType === 'webcam'
+                ? 'Webcam Device Index (Local Server Only):'
+                : 'Live Stream Network URL:'}
             </label>
             <input
               type="text"
@@ -184,6 +240,22 @@ export default function AddCameraModal({ isOpen, onClose, onCameraAdded }) {
               required
             />
           </div>
+
+          {/* Quick Preset Helper */}
+          {sourceType === 'http' && (
+            <div className="flex items-center gap-2 text-[11px]">
+              <span className="text-slate-400">Quick Fill:</span>
+              <button
+                type="button"
+                onClick={() =>
+                  setSourceVal(`${API_BASE_URL}/phone_stream.html`)
+                }
+                className="text-blue-400 hover:underline"
+              >
+                Render Mobile Feed
+              </button>
+            </div>
+          )}
 
           {/* Actions */}
           <div className="flex items-center justify-end gap-2.5 pt-3 border-t border-slate-800">

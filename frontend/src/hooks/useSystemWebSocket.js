@@ -1,5 +1,34 @@
 import { useState, useEffect, useRef, useCallback } from 'react';
 
+// Force absolute API base URL (guards against empty strings or missing protocol prefixes)
+const getApiBaseUrl = () => {
+  const rawApiUrl =
+    import.meta.env.VITE_API_BASE_URL || import.meta.env.VITE_API_URL;
+  if (
+    rawApiUrl &&
+    typeof rawApiUrl === 'string' &&
+    rawApiUrl.trim().startsWith('http')
+  ) {
+    return rawApiUrl.trim().replace(/\/+$/, '');
+  }
+  return 'https://border-surveillance-api.onrender.com';
+};
+
+const API_BASE_URL = getApiBaseUrl();
+
+// Derive WebSocket base URL dynamically from API_BASE_URL if VITE_WS_URL is unset
+const getWsBaseUrl = () => {
+  const rawWsUrl = import.meta.env.VITE_WS_URL;
+  if (
+    rawWsUrl &&
+    typeof rawWsUrl === 'string' &&
+    rawWsUrl.trim().startsWith('ws')
+  ) {
+    return rawWsUrl.trim().replace(/\/+$/, '');
+  }
+  return API_BASE_URL.replace(/^http/, 'ws');
+};
+
 /**
  * Custom hook to handle real-time communications with the Border Surveillance backend.
  */
@@ -17,18 +46,24 @@ export function useSystemWebSocket({ onNewAlert } = {}) {
     last_update: new Date().toISOString(),
     zone_name: 'Border Sector North (Alpha-7)',
   });
+
   // Keep a stable ref so closures inside WS handlers always call the latest callback
   const onNewAlertRef = useRef(onNewAlert);
-  useEffect(() => { onNewAlertRef.current = onNewAlert; }, [onNewAlert]);
+  useEffect(() => {
+    onNewAlertRef.current = onNewAlert;
+  }, [onNewAlert]);
 
   const alertWsRef = useRef(null);
   const frameWsRefs = useRef({});
 
-  // 1. Fetch camera registry
+  // 1. Fetch camera registry from backend API safely
   const refreshCameras = useCallback(async () => {
     try {
-      const res = await fetch('/cameras');
-      if (res.ok) {
+      const res = await fetch(`${API_BASE_URL}/api/cameras`);
+
+      // Guard: Check if response header is actually JSON before parsing
+      const contentType = res.headers.get('content-type');
+      if (res.ok && contentType && contentType.includes('application/json')) {
         const data = await res.json();
         const cams = data.cameras || [];
         setCameraList(cams);
@@ -38,26 +73,31 @@ export function useSystemWebSocket({ onNewAlert } = {}) {
           cameras_online: cams.filter((c) => c.enabled !== false).length,
           last_update: new Date().toISOString(),
         }));
+      } else {
+        console.warn(
+          `[Backend Pending] Endpoint ${API_BASE_URL}/api/cameras returned non-JSON response (Server waking up).`
+        );
       }
     } catch (err) {
-      console.warn('Backend not yet reachable on /cameras, retrying...', err);
+      console.warn(
+        `Backend not yet reachable on ${API_BASE_URL}/api/cameras, retrying...`,
+        err
+      );
     }
   }, []);
 
   useEffect(() => {
     refreshCameras();
-    const interval = setInterval(refreshCameras, 2500);
+    const interval = setInterval(refreshCameras, 3000);
     return () => clearInterval(interval);
   }, [refreshCameras]);
 
-  // 2. Connect Alert WebSocket
+  // 2. Connect Alert WebSocket directly to backend API URL
   useEffect(() => {
     let reconnectTimer = null;
     const connectAlerts = () => {
-      const isHttps = window.location.protocol === 'https:';
-      const protocol = isHttps ? 'wss:' : 'ws:';
-      const host = window.location.host;
-      const wsUrl = `${protocol}//${host}/ws/alerts`;
+      const wsBase = getWsBaseUrl();
+      const wsUrl = `${wsBase}/ws/alerts`;
 
       const ws = new WebSocket(wsUrl);
       alertWsRef.current = ws;
@@ -97,8 +137,8 @@ export function useSystemWebSocket({ onNewAlert } = {}) {
 
       ws.onclose = () => {
         setConnected(false);
-        console.log('[Alert WS] Closed, reconnecting in 2s...');
-        reconnectTimer = setTimeout(connectAlerts, 2000);
+        console.log('[Alert WS] Closed, reconnecting in 3s...');
+        reconnectTimer = setTimeout(connectAlerts, 3000);
       };
 
       ws.onerror = (err) => {
@@ -115,17 +155,18 @@ export function useSystemWebSocket({ onNewAlert } = {}) {
     };
   }, [refreshCameras]);
 
-  // 3. Connect Frame WebSockets for each camera
+  // 3. Connect Frame WebSockets for each camera directly to backend API
   useEffect(() => {
     const activeWsMap = frameWsRefs.current;
-    const isHttps = window.location.protocol === 'https:';
-    const protocol = isHttps ? 'wss:' : 'ws:';
-    const host = window.location.host;
+    const wsBase = getWsBaseUrl();
 
     cameraList.forEach((cam) => {
       const cid = cam.camera_id;
-      if (!activeWsMap[cid] || activeWsMap[cid].readyState === WebSocket.CLOSED) {
-        const wsUrl = `${protocol}//${host}/ws/frames/${cid}`;
+      if (
+        !activeWsMap[cid] ||
+        activeWsMap[cid].readyState === WebSocket.CLOSED
+      ) {
+        const wsUrl = `${wsBase}/ws/frames/${cid}`;
         const ws = new WebSocket(wsUrl);
         activeWsMap[cid] = ws;
 

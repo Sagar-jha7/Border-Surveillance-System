@@ -1,4 +1,4 @@
-﻿import { useState, useEffect, useCallback, useRef } from "react";
+import { useState, useEffect, useCallback, useRef } from "react";
 import StatusStrip from "./components/StatusStrip";
 import CameraGrid from "./components/CameraGrid";
 import AlertFeed from "./components/AlertFeed";
@@ -8,15 +8,24 @@ import WatchlistModal from "./components/WatchlistModal";
 import { useSystemWebSocket } from "./hooks/useSystemWebSocket";
 import { useAlarmBeep } from "./hooks/useAlarmBeep";
 
+// Centralized API Base URL configuration with strict URL guards
+const getApiBaseUrl = () => {
+  const rawApiUrl = import.meta.env.VITE_API_BASE_URL;
+  if (
+    rawApiUrl &&
+    typeof rawApiUrl === "string" &&
+    rawApiUrl.trim().startsWith("http")
+  ) {
+    return rawApiUrl.trim().replace(/\/+$/, "");
+  }
+  return "https://border-surveillance-api.onrender.com";
+};
+
+const API_BASE_URL = getApiBaseUrl();
+
 /**
  * IBVAP Root Dashboard Component.
  * Intelligent Border Video Analytics Platform (SIH26187 / BSF / MHA).
- *
- * v2 Additions:
- *  - Beep alarm hook (RED/AMBER/BLUE distinct tones)
- *  - System Start / Stop master toggle
- *  - Full System Reset (clears all cameras, alerts, logs)
- *  - Threat indicator dots in StatusStrip
  */
 export default function App() {
   const { beep, toggleMute } = useAlarmBeep();
@@ -62,9 +71,11 @@ export default function App() {
     let cancelled = false;
     async function loadMobileStreamInfo() {
       try {
-        const res = await fetch("/mobile-stream-info");
+        // Prefixed with /api and safely handled raw text before JSON parse
+        const res = await fetch(`${API_BASE_URL}/api/mobile-stream-info`);
         if (!res.ok) return;
-        const info = await res.json();
+        const text = await res.text();
+        const info = text ? JSON.parse(text) : {};
         if (!cancelled && info.https_url) setMobileStreamUrl(info.https_url);
       } catch (err) {
         console.warn("Mobile stream info unavailable, using browser host fallback.", err);
@@ -78,21 +89,21 @@ export default function App() {
 
   const handleSystemStop = async () => {
     try {
-      const res = await fetch("/api/system/stop", { method: "POST" });
+      const res = await fetch(`${API_BASE_URL}/api/system/stop`, { method: "POST" });
       if (res.ok) setSystemRunning(false);
     } catch (err) { console.error("System stop failed:", err); }
   };
 
   const handleSystemStart = async () => {
     try {
-      const res = await fetch("/api/system/start", { method: "POST" });
+      const res = await fetch(`${API_BASE_URL}/api/system/start`, { method: "POST" });
       if (res.ok) { setSystemRunning(true); refreshCameras(); }
     } catch (err) { console.error("System start failed:", err); }
   };
 
   const handleSystemReset = async () => {
     try {
-      const res = await fetch("/api/system/reset", { method: "POST" });
+      const res = await fetch(`${API_BASE_URL}/api/system/reset`, { method: "POST" });
       if (res.ok) {
         setAlerts([]);
         setSystemRunning(true);
@@ -110,7 +121,7 @@ export default function App() {
 
   const handleQuickStartWebcam = async () => {
     try {
-      const res = await fetch("/api/cameras", {
+      const res = await fetch(`${API_BASE_URL}/api/cameras`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
@@ -128,7 +139,7 @@ export default function App() {
   const handleRemoveCamera = async (cameraId) => {
     if (window.confirm(`Remove camera '${cameraId}'?`)) {
       try {
-        const res = await fetch(`/api/cameras/${cameraId}`, { method: "DELETE" });
+        const res = await fetch(`${API_BASE_URL}/api/cameras/${cameraId}`, { method: "DELETE" });
         if (res.ok) refreshCameras();
       } catch (err) { console.error("Failed to remove camera:", err); }
     }

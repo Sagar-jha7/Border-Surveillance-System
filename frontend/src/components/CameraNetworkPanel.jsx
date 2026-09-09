@@ -1,7 +1,7 @@
 import React from 'react';
 import { Smartphone, Radio, Shield, MapPin, Wifi } from 'lucide-react';
 
-export default function CameraNetworkPanel({ cameras, mobileStreamUrl }) {
+export default function CameraNetworkPanel({ cameras = [], mobileStreamUrl = '' }) {
   return (
     <div className="bg-slate-900/90 flex flex-col h-1/2 border-b border-slate-700/80">
       {/* Header */}
@@ -24,7 +24,7 @@ export default function CameraNetworkPanel({ cameras, mobileStreamUrl }) {
             <div className="bg-slate-800/40 p-3 rounded-lg border border-slate-700/40">
               <p className="font-semibold text-slate-400">No Mobile Cameras Active</p>
               <p className="text-[11px] text-slate-500 mt-1">
-                Open <span className="text-cyan-300 font-mono break-all">{mobileStreamUrl}</span> on your phone.
+                Open <span className="text-cyan-300 font-mono break-all">{mobileStreamUrl || 'mobile stream link'}</span> on your phone.
               </p>
             </div>
           </div>

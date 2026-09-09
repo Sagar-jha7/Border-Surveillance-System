@@ -1,22 +1,76 @@
 import React, { useState, useEffect, useRef } from 'react';
-import { ShieldAlert, User, Car, Plus, X, Trash2, CheckCircle2, Camera, Image, Upload, Eye, AlertTriangle } from 'lucide-react';
+import { 
+  ShieldAlert, 
+  User, 
+  Car, 
+  Plus, 
+  X, 
+  Trash2, 
+  CheckCircle2, 
+  Camera, 
+  Upload, 
+  Eye, 
+  AlertTriangle 
+} from 'lucide-react';
+
+const API_BASE_URL = import.meta.env.VITE_API_BASE_URL || "https://border-surveillance-api.onrender.com";
+
+// Helper utility to read and compress File objects as scaled JPEG Data URLs
+const readFileAndCompress = (file, maxWidth = 800, quality = 0.75) => {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onerror = (err) => reject(err);
+    reader.onload = (e) => {
+      const img = new Image();
+      img.onerror = (err) => reject(err);
+      img.onload = () => {
+        let width = img.width;
+        let height = img.height;
+
+        if (width > maxWidth || height > maxWidth) {
+          if (width > height) {
+            height = Math.round((height * maxWidth) / width);
+            width = maxWidth;
+          } else {
+            width = Math.round((width * maxWidth) / height);
+            height = maxWidth;
+          }
+        }
+
+        const canvas = document.createElement('canvas');
+        canvas.width = width;
+        canvas.height = height;
+        const ctx = canvas.getContext('2d');
+        if (ctx) {
+          ctx.drawImage(img, 0, 0, width, height);
+          const compressedDataUrl = canvas.toDataURL('image/jpeg', quality);
+          resolve(compressedDataUrl);
+        } else {
+          reject(new Error('Failed to get 2D context'));
+        }
+      };
+      img.src = e.target?.result;
+    };
+    reader.readAsDataURL(file);
+  });
+};
 
 export default function WatchlistModal({ isOpen, onClose }) {
-  const [activeTab, setActiveTab] = useState('faces'); // Default to faces tab for FRS focus
+  const [activeTab, setActiveTab] = useState('faces');
   const [suspectPlates, setSuspectPlates] = useState([]);
   const [suspectFaces, setSuspectFaces] = useState([]);
   const [loading, setLoading] = useState(false);
 
-  // New Plate inputs
+  // Plate inputs
   const [newPlate, setNewPlate] = useState('');
   const [plateReason, setPlateReason] = useState('');
   const [platePriority, setPlatePriority] = useState('RED');
 
-  // New Face inputs & multi-photo selection
+  // Face inputs & multi-photo selection
   const [newFaceName, setNewFaceName] = useState('');
   const [faceNotes, setFaceNotes] = useState('');
   const [facePriority, setFacePriority] = useState('RED');
-  const [newFacePhotos, setNewFacePhotos] = useState([]); // Array of base64 data URLs
+  const [newFacePhotos, setNewFacePhotos] = useState([]);
   const [previewPhotoUrl, setPreviewPhotoUrl] = useState(null);
 
   const fileInputRef = useRef(null);
@@ -25,7 +79,7 @@ export default function WatchlistModal({ isOpen, onClose }) {
 
   const fetchWatchlist = async () => {
     try {
-      const res = await fetch('/api/watchlist');
+      const res = await fetch(`${API_BASE_URL}/api/watchlist`);
       if (res.ok) {
         const data = await res.json();
         setSuspectPlates(data.suspect_plates || []);
@@ -42,12 +96,10 @@ export default function WatchlistModal({ isOpen, onClose }) {
     }
   }, [isOpen]);
 
-  if (!isOpen) return null;
-
   const saveWatchlist = async (updatedPlates, updatedFaces) => {
     setLoading(true);
     try {
-      await fetch('/api/watchlist', {
+      const res = await fetch(`${API_BASE_URL}/api/watchlist`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
@@ -55,14 +107,20 @@ export default function WatchlistModal({ isOpen, onClose }) {
           suspect_faces: updatedFaces,
         }),
       });
-      setSuspectPlates(updatedPlates);
-      setSuspectFaces(updatedFaces);
+
+      if (res.ok) {
+        setSuspectPlates(updatedPlates);
+        setSuspectFaces(updatedFaces);
+      }
     } catch (err) {
       console.error('Failed to save watchlist:', err);
     } finally {
       setLoading(false);
     }
   };
+
+  // Safe Guard: Conditional rendering check placed AFTER all hooks
+  if (!isOpen) return null;
 
   // -------------------------------------------------------------------------
   // BOLO Plate Handlers
@@ -91,22 +149,19 @@ export default function WatchlistModal({ isOpen, onClose }) {
   // -------------------------------------------------------------------------
   // Multi-Photo FRS Enrolment Handlers
   // -------------------------------------------------------------------------
-  const handlePhotosSelected = (e) => {
+  const handlePhotosSelected = async (e) => {
     const files = Array.from(e.target.files || []);
     if (!files.length) return;
 
-    files.forEach((file) => {
-      const reader = new FileReader();
-      reader.onload = (loadEvt) => {
-        if (loadEvt.target?.result) {
-          setNewFacePhotos((prev) => [...prev, loadEvt.target.result]);
-        }
-      };
-      reader.readAsDataURL(file);
-    });
-
-    if (fileInputRef.current) {
-      fileInputRef.current.value = '';
+    try {
+      const compressedResults = await Promise.all(
+        files.map((file) => readFileAndCompress(file))
+      );
+      setNewFacePhotos((prev) => [...prev, ...compressedResults.filter(Boolean)]);
+    } catch (err) {
+      console.error('Failed to process reference images:', err);
+    } finally {
+      if (fileInputRef.current) fileInputRef.current.value = '';
     }
   };
 
@@ -123,10 +178,9 @@ export default function WatchlistModal({ isOpen, onClose }) {
     const uploadedUrls = [];
 
     try {
-      // Upload each reference photo to backend
       for (let i = 0; i < newFacePhotos.length; i++) {
         const photoData = newFacePhotos[i];
-        const res = await fetch('/api/watchlist/upload_photo', {
+        const res = await fetch(`${API_BASE_URL}/api/watchlist/upload_photo`, {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({
@@ -136,9 +190,7 @@ export default function WatchlistModal({ isOpen, onClose }) {
         });
         if (res.ok) {
           const out = await res.json();
-          if (out.url) {
-            uploadedUrls.push(out.url);
-          }
+          if (out.url) uploadedUrls.push(out.url);
         }
       }
 
@@ -154,7 +206,6 @@ export default function WatchlistModal({ isOpen, onClose }) {
       const updated = [...suspectFaces, newSuspect];
       await saveWatchlist(suspectPlates, updated);
 
-      // Reset form
       setNewFaceName('');
       setFaceNotes('');
       setNewFacePhotos([]);
@@ -165,7 +216,6 @@ export default function WatchlistModal({ isOpen, onClose }) {
     }
   };
 
-  // Add photo to existing suspect profile
   const handleTriggerAppendPhoto = (idx) => {
     setTargetAppendIdx(idx);
     if (appendFileInputRef.current) {
@@ -179,39 +229,36 @@ export default function WatchlistModal({ isOpen, onClose }) {
 
     setLoading(true);
     try {
-      const reader = new FileReader();
-      reader.onload = async (loadEvt) => {
-        const dataUrl = loadEvt.target?.result;
-        if (!dataUrl) return;
+      const compressedDataUrl = await readFileAndCompress(file);
+      if (!compressedDataUrl) return;
 
-        const targetSuspect = suspectFaces[targetAppendIdx];
-        const res = await fetch('/api/watchlist/upload_photo', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({
-            person_id: targetSuspect.id || 'SUSP',
-            image_data: dataUrl,
-          }),
-        });
+      const targetSuspect = suspectFaces[targetAppendIdx];
+      const res = await fetch(`${API_BASE_URL}/api/watchlist/upload_photo`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          person_id: targetSuspect.id || 'SUSP',
+          image_data: compressedDataUrl,
+        }),
+      });
 
-        if (res.ok) {
-          const out = await res.json();
-          if (out.url) {
-            const updated = [...suspectFaces];
-            const currentPhotos = updated[targetAppendIdx].photos || [];
-            updated[targetAppendIdx] = {
-              ...updated[targetAppendIdx],
-              photos: [...currentPhotos, out.url],
-            };
-            await saveWatchlist(suspectPlates, updated);
-          }
+      if (res.ok) {
+        const out = await res.json();
+        if (out.url) {
+          const updated = [...suspectFaces];
+          const currentPhotos = updated[targetAppendIdx].photos || [];
+          updated[targetAppendIdx] = {
+            ...updated[targetAppendIdx],
+            photos: [...currentPhotos, out.url],
+          };
+          await saveWatchlist(suspectPlates, updated);
         }
-        setTargetAppendIdx(null);
-        setLoading(false);
-      };
-      reader.readAsDataURL(file);
+      }
     } catch (err) {
       console.error('Failed to append photo:', err);
+    } finally {
+      setTargetAppendIdx(null);
+      if (appendFileInputRef.current) appendFileInputRef.current.value = '';
       setLoading(false);
     }
   };
@@ -282,7 +329,7 @@ export default function WatchlistModal({ isOpen, onClose }) {
         <div className="p-5 flex-1 overflow-y-auto">
           {activeTab === 'faces' ? (
             <div className="flex flex-col gap-5">
-              {/* Add Face Form with Multi-Photo Upload */}
+              {/* Add Face Form */}
               <form onSubmit={handleAddFace} className="bg-slate-950/80 p-4 rounded-xl border border-slate-800 flex flex-col gap-3">
                 <div className="flex items-center justify-between">
                   <span className="text-xs font-bold text-cyan-400 uppercase tracking-wide flex items-center gap-1.5">
@@ -470,7 +517,7 @@ export default function WatchlistModal({ isOpen, onClose }) {
                               >
                                 <img
                                   src={photoUrl}
-                                  alt={`${f.name} photo ${pIdx + 1}`}
+                                  alt={`${f.name} angle ${pIdx + 1}`}
                                   className="w-full h-full object-cover cursor-pointer"
                                   onClick={() => setPreviewPhotoUrl(photoUrl)}
                                 />
@@ -583,7 +630,7 @@ export default function WatchlistModal({ isOpen, onClose }) {
           )}
         </div>
 
-        {/* Hidden File Input for Appending Photo to Existing Suspect */}
+        {/* Hidden File Input for Appending Photo */}
         <input
           type="file"
           ref={appendFileInputRef}
@@ -594,7 +641,7 @@ export default function WatchlistModal({ isOpen, onClose }) {
 
         {/* Photo Fullscreen Preview Modal */}
         {previewPhotoUrl && (
-          <div className="fixed inset-0 z-60 flex items-center justify-center bg-black/90 p-4">
+          <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/90 p-4">
             <div className="relative max-w-lg w-full bg-slate-900 border border-slate-700 rounded-2xl overflow-hidden shadow-2xl p-3">
               <div className="flex items-center justify-between pb-2 border-b border-slate-800 mb-2">
                 <span className="text-xs font-bold text-slate-200">FRS Enrolled Photo Preview</span>
@@ -631,4 +678,3 @@ export default function WatchlistModal({ isOpen, onClose }) {
     </div>
   );
 }
-
