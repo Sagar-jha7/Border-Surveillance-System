@@ -1,14 +1,22 @@
 import { useState, useEffect, useRef, useCallback } from 'react';
 
-// Configure central backend API & WebSocket base URLs
-// In useSystemWebSocket.js and App.jsx:
-const API_BASE_URL = 
-  import.meta.env.VITE_API_BASE_URL && import.meta.env.VITE_API_BASE_URL.trim() !== ""
-    ? import.meta.env.VITE_API_BASE_URL
-    : "https://border-surveillance-api.onrender.com";
+// Safely derive API Base URL with strict guards against unreplaced Vite placeholders
+const getApiBaseUrl = () => {
+  const rawApiUrl = import.meta.env.VITE_API_BASE_URL;
+  if (rawApiUrl && typeof rawApiUrl === 'string' && rawApiUrl.trim() !== '' && !rawApiUrl.includes('%')) {
+    return rawApiUrl.trim().replace(/\/+$/, ''); // Remove trailing slashes
+  }
+  return 'https://border-surveillance-api.onrender.com';
+};
+
+const API_BASE_URL = getApiBaseUrl();
+
 // Derive WebSocket base URL dynamically from API_BASE_URL if VITE_WS_URL is unset
 const getWsBaseUrl = () => {
-  if (import.meta.env.VITE_WS_URL) return import.meta.env.VITE_WS_URL;
+  const rawWsUrl = import.meta.env.VITE_WS_URL;
+  if (rawWsUrl && typeof rawWsUrl === 'string' && rawWsUrl.trim() !== '' && !rawWsUrl.includes('%')) {
+    return rawWsUrl.trim().replace(/\/+$/, '');
+  }
   return API_BASE_URL.replace(/^http/, 'ws');
 };
 
