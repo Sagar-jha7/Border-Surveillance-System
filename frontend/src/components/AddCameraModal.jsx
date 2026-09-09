@@ -1,6 +1,21 @@
 import React, { useState } from 'react';
 import { Video, X, Plus, Radio, Server, Shield, CheckCircle2 } from 'lucide-react';
 
+// Force absolute API base URL (guards against empty strings or missing protocol prefixes)
+const getApiBaseUrl = () => {
+  const rawApiUrl = import.meta.env.VITE_API_BASE_URL;
+  if (
+    rawApiUrl &&
+    typeof rawApiUrl === 'string' &&
+    rawApiUrl.trim().startsWith('http')
+  ) {
+    return rawApiUrl.trim().replace(/\/+$/, '');
+  }
+  return 'https://border-surveillance-api.onrender.com';
+};
+
+const API_BASE_URL = getApiBaseUrl();
+
 export default function AddCameraModal({ isOpen, onClose, onCameraAdded }) {
   const [cameraId, setCameraId] = useState('');
   const [location, setLocation] = useState('');
@@ -38,7 +53,7 @@ export default function AddCameraModal({ isOpen, onClose, onCameraAdded }) {
     };
 
     try {
-      const res = await fetch('/api/cameras', {
+      const res = await fetch(`${API_BASE_URL}/api/cameras`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(payload),
@@ -53,7 +68,7 @@ export default function AddCameraModal({ isOpen, onClose, onCameraAdded }) {
       onClose();
     } catch (err) {
       setError(err.message);
-    } finally {
+    } fontally {
       setLoading(false);
     }
   };
