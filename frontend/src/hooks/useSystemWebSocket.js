@@ -1,10 +1,14 @@
 import { useState, useEffect, useRef, useCallback } from 'react';
 
-// Safely derive API Base URL with strict guards against unreplaced Vite placeholders
+// Force absolute API base URL (guards against empty strings or missing protocol prefixes)
 const getApiBaseUrl = () => {
   const rawApiUrl = import.meta.env.VITE_API_BASE_URL;
-  if (rawApiUrl && typeof rawApiUrl === 'string' && rawApiUrl.trim() !== '' && !rawApiUrl.includes('%')) {
-    return rawApiUrl.trim().replace(/\/+$/, ''); // Remove trailing slashes
+  if (
+    rawApiUrl &&
+    typeof rawApiUrl === 'string' &&
+    rawApiUrl.trim().startsWith('http')
+  ) {
+    return rawApiUrl.trim().replace(/\/+$/, '');
   }
   return 'https://border-surveillance-api.onrender.com';
 };
@@ -14,7 +18,11 @@ const API_BASE_URL = getApiBaseUrl();
 // Derive WebSocket base URL dynamically from API_BASE_URL if VITE_WS_URL is unset
 const getWsBaseUrl = () => {
   const rawWsUrl = import.meta.env.VITE_WS_URL;
-  if (rawWsUrl && typeof rawWsUrl === 'string' && rawWsUrl.trim() !== '' && !rawWsUrl.includes('%')) {
+  if (
+    rawWsUrl &&
+    typeof rawWsUrl === 'string' &&
+    rawWsUrl.trim().startsWith('ws')
+  ) {
     return rawWsUrl.trim().replace(/\/+$/, '');
   }
   return API_BASE_URL.replace(/^http/, 'ws');
