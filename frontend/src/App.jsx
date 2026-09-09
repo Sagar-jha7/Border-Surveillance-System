@@ -8,12 +8,21 @@ import WatchlistModal from "./components/WatchlistModal";
 import { useSystemWebSocket } from "./hooks/useSystemWebSocket";
 import { useAlarmBeep } from "./hooks/useAlarmBeep";
 
-// Centralized API Base URL configuration
-// In useSystemWebSocket.js and App.jsx:
-const API_BASE_URL = 
-  import.meta.env.VITE_API_BASE_URL && import.meta.env.VITE_API_BASE_URL.trim() !== ""
-    ? import.meta.env.VITE_API_BASE_URL
-    : "https://border-surveillance-api.onrender.com";
+// Centralized API Base URL configuration with strict URL guards
+const getApiBaseUrl = () => {
+  const rawApiUrl = import.meta.env.VITE_API_BASE_URL;
+  if (
+    rawApiUrl &&
+    typeof rawApiUrl === "string" &&
+    rawApiUrl.trim().startsWith("http")
+  ) {
+    return rawApiUrl.trim().replace(/\/+$/, "");
+  }
+  return "https://border-surveillance-api.onrender.com";
+};
+
+const API_BASE_URL = getApiBaseUrl();
+
 /**
  * IBVAP Root Dashboard Component.
  * Intelligent Border Video Analytics Platform (SIH26187 / BSF / MHA).
