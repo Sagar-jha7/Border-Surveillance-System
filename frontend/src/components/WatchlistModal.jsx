@@ -103,8 +103,10 @@ export default function WatchlistModal({ isOpen, onClose }) {
       setLoading(false);
     }
   };
+
   // -------------------------------------------------------------------------
   // BOLO Plate Handlers
+  // -------------------------------------------------------------------------
   const handleAddPlate = (e) => {
     e.preventDefault();
     if (!newPlate.trim()) return;
@@ -126,7 +128,7 @@ export default function WatchlistModal({ isOpen, onClose }) {
     saveWatchlist(updated, suspectFaces);
   };
 
-  // -------------------------------------------------------------------------
+  // ------------------------------------------------
   // Multi-Photo FRS Enrolment Handlers
   const handlePhotosSelected = async (e) => {
     const files = Array.from(e.target.files || []);
