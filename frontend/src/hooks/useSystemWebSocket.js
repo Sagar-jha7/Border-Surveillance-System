@@ -2,7 +2,8 @@ import { useState, useEffect, useRef, useCallback } from 'react';
 
 // Force absolute API base URL (guards against empty strings or missing protocol prefixes)
 const getApiBaseUrl = () => {
-  const rawApiUrl = import.meta.env.VITE_API_BASE_URL;
+  const rawApiUrl =
+    import.meta.env.VITE_API_BASE_URL || import.meta.env.VITE_API_URL;
   if (
     rawApiUrl &&
     typeof rawApiUrl === 'string' &&
@@ -48,18 +49,22 @@ export function useSystemWebSocket({ onNewAlert } = {}) {
 
   // Keep a stable ref so closures inside WS handlers always call the latest callback
   const onNewAlertRef = useRef(onNewAlert);
-  useEffect(() => { onNewAlertRef.current = onNewAlert; }, [onNewAlert]);
+  useEffect(() => {
+    onNewAlertRef.current = onNewAlert;
+  }, [onNewAlert]);
 
   const alertWsRef = useRef(null);
   const frameWsRefs = useRef({});
 
-  // 1. Fetch camera registry from backend API
+  // 1. Fetch camera registry from backend API safely
   const refreshCameras = useCallback(async () => {
     try {
       const res = await fetch(`${API_BASE_URL}/api/cameras`);
-      if (res.ok) {
-        const text = await res.text();
-        const data = text ? JSON.parse(text) : {};
+
+      // Guard: Check if response header is actually JSON before parsing
+      const contentType = res.headers.get('content-type');
+      if (res.ok && contentType && contentType.includes('application/json')) {
+        const data = await res.json();
         const cams = data.cameras || [];
         setCameraList(cams);
         setStatus((prev) => ({
@@ -68,9 +73,16 @@ export function useSystemWebSocket({ onNewAlert } = {}) {
           cameras_online: cams.filter((c) => c.enabled !== false).length,
           last_update: new Date().toISOString(),
         }));
+      } else {
+        console.warn(
+          `[Backend Pending] Endpoint ${API_BASE_URL}/api/cameras returned non-JSON response (Server waking up).`
+        );
       }
     } catch (err) {
-      console.warn('Backend not yet reachable on /api/cameras, retrying...', err);
+      console.warn(
+        `Backend not yet reachable on ${API_BASE_URL}/api/cameras, retrying...`,
+        err
+      );
     }
   }, []);
 
@@ -150,7 +162,10 @@ export function useSystemWebSocket({ onNewAlert } = {}) {
 
     cameraList.forEach((cam) => {
       const cid = cam.camera_id;
-      if (!activeWsMap[cid] || activeWsMap[cid].readyState === WebSocket.CLOSED) {
+      if (
+        !activeWsMap[cid] ||
+        activeWsMap[cid].readyState === WebSocket.CLOSED
+      ) {
         const wsUrl = `${wsBase}/ws/frames/${cid}`;
         const ws = new WebSocket(wsUrl);
         activeWsMap[cid] = ws;
