@@ -76,7 +76,6 @@ The Border Surveillance System is an intelligent video analytics platform design
 
 3. **Access the dashboard**
    - Open your browser and navigate to `http://localhost:3000` (or configured port)
-   - Log in with your credentials
    - Add camera feeds and start monitoring
 
 ## Key Components
@@ -92,7 +91,6 @@ The Border Surveillance System is an intelligent video analytics platform design
 
 ### Alert Management
 - Configurable alert thresholds
-- Multi-channel notifications (email, SMS, in-app)
 - Alert logging and history
 
 ### Web Dashboard
